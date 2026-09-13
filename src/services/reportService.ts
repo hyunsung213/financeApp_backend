@@ -31,10 +31,22 @@ export class ReportService {
 
   async dailyReport(userId: string, start?: string, end?: string) {
     const context = await this.context(userId, end ? parseDateOnly(end) : new Date()); const from = start ? parseDateOnly(start) : asDate(context.cycle.startDate); const to = end ? parseDateOnly(end) : asDate(context.cycle.endDate);
-    const transactions = await Transaction.findAll({ where: { userId, status: 'CONFIRMED', type: 'EXPENSE', occurredAt: { [Op.gte]: dateOnly(from), [Op.lte]: dateOnly(to) } }, include: [{ model: Category, as: 'category' }] });
+    const transactions = await Transaction.findAll({ where: { userId, status: 'CONFIRMED', type: { [Op.in]: ['INCOME', 'EXPENSE'] }, occurredAt: { [Op.gte]: dateOnly(from), [Op.lte]: dateOnly(to) } }, include: [{ model: Category, as: 'category' }] });
+    const incomeByDate = new Map<string, number>(); const expenseByDate = new Map<string, number>();
+    for (const transaction of transactions as any[]) {
+      const key = asDateKey(transaction.occurredAt); const amount = Number(transaction.amount);
+      const target = transaction.type === 'INCOME' ? incomeByDate : expenseByDate;
+      target.set(key, (target.get(key) ?? 0) + amount);
+    }
     const rows = []; const dailyRecommended = Number(context.cycle.plannedFlexibleAmount) ? Math.floor(Number(context.cycle.plannedFlexibleAmount) / context.result.cycleDays) : 0;
-    for (let date = from; date <= to; date = addDays(date, 1)) { const key = dateOnly(date); const spent = transactions.filter((transaction: any) => asDateKey(transaction.occurredAt) === key).reduce((sum, transaction: any) => sum + Number(transaction.amount), 0); rows.push({ date: key, spent, recommended: dailyRecommended, difference: spent - dailyRecommended }); }
-    return rows;
+    let noSpendDays = 0; let noActivityDays = 0; let totalIncome = 0; let totalExpense = 0;
+    for (let date = from; date <= to; date = addDays(date, 1)) {
+      const key = dateOnly(date); const income = incomeByDate.get(key) ?? 0; const expense = expenseByDate.get(key) ?? 0;
+      if (expense === 0) noSpendDays++; if (income === 0 && expense === 0) noActivityDays++;
+      totalIncome += income; totalExpense += expense;
+      rows.push({ date: key, income, expense, spent: expense, recommended: dailyRecommended, difference: expense - dailyRecommended });
+    }
+    return { period: { startDate: dateOnly(from), endDate: dateOnly(to) }, summary: { totalIncome, totalExpense, noSpendDays, noActivityDays }, daily: rows };
   }
 
   async monthly(userId: string) { const transactions = await Transaction.findAll({ where: { userId, status: 'CONFIRMED' }, include: [{ model: Category, as: 'category' }] }); const byMonth = new Map<string, { income: number; expense: number; saving: number; investment: number }>(); for (const transaction of transactions as any[]) { const key = asDateKey(transaction.occurredAt).slice(0, 7); const row = byMonth.get(key) ?? { income: 0, expense: 0, saving: 0, investment: 0 }; if (transaction.type === 'INCOME') row.income += Number(transaction.amount); else if (transaction.type === 'EXPENSE') row.expense += Number(transaction.amount); else if (transaction.category?.purposeType === 'INVESTMENT') row.investment += Number(transaction.amount); else row.saving += Number(transaction.amount); byMonth.set(key, row); } return [...byMonth.entries()].sort().map(([month, values]) => ({ month, ...values })); }

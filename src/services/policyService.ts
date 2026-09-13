@@ -1,8 +1,10 @@
 import { Op } from 'sequelize';
-import { Policy, PolicyBookmark, User } from '../models';
+import { Policy, PolicyBookmark, PolicyCalendarEvent, User } from '../models';
+import { env } from '../config/env';
 import { AppError, notFound } from '../utils/errors';
 import { newId } from '../utils/ids';
 import { fetchYouthPolicies, type YouthPolicySearchParams } from './youthPolicyApiService';
+import { generatePolicyPresentation, policyPresentationSourceHash, withDeadlineLabel, POLICY_PRESENTATION_VERSION } from './policyPresentationService';
 
 const first = (record: Record<string, unknown>, aliases: string[]) => {
   const wanted = new Set(aliases.map((alias) => alias.replace(/[_-]/g, '').toLowerCase()));
@@ -87,10 +89,12 @@ export class PolicyService {
     if (filters.age !== undefined) where[Op.and] = [{ [Op.or]: [{ ageMin: null }, { ageMin: { [Op.lte]: filters.age } }] }, { [Op.or]: [{ ageMax: null }, { ageMax: { [Op.gte]: filters.age } }] }];
     if (filters.applicationStatus === 'OPEN') where[Op.or] = [{ applicationEndDate: null }, { applicationEndDate: { [Op.gte]: today } }];
     if (filters.applicationStatus === 'CLOSED') where.applicationEndDate = { [Op.lt]: today };
-    return Policy.findAll({ where, order: [['updatedAt', 'DESC']] });
+    const policies = await Policy.findAll({ where, order: [['updatedAt', 'DESC']] });
+    return policies.map((policy: any) => this.serialize(policy));
   }
 
-  async get(id: string) { const policy = await Policy.findByPk(id); if (!policy) throw notFound('Policy not found'); return policy; }
+  private serialize(policy: any) { const plain = typeof policy?.toJSON === 'function' ? policy.toJSON() : policy; return { ...plain, presentation: withDeadlineLabel(plain) }; }
+  async get(id: string) { const policy = await Policy.findByPk(id); if (!policy) throw notFound('Policy not found'); return this.serialize(policy); }
   async recommended(userId: string) {
     const user = await User.findByPk(userId, { attributes: ['age', 'region'] });
     if (user?.age === null || user?.age === undefined || !user.region) throw new AppError('PROFILE_REQUIRED', 'Age and region must be saved before requesting recommendations', 409);
@@ -104,7 +108,7 @@ export class PolicyService {
       order: [['updatedAt', 'DESC']],
     });
     const matched = policies.filter((policy: any) => regionMatches(policy.region, user.region));
-    return { profile: { age: Number(user.age), region: user.region }, policies: matched };
+    return { profile: { age: Number(user.age), region: user.region }, policies: matched.map((policy: any) => this.serialize(policy)) };
   }
   async syncFromYouthPolicyApi(params: YouthPolicySearchParams = {}) {
     const result = await fetchYouthPolicies(params);
@@ -114,13 +118,92 @@ export class PolicyService {
     for (const raw of result.items) {
       const policy = mapPolicy(raw);
       if (!policy) { skippedCount++; continue; }
-      const exists = await Policy.findByPk(policy.id, { attributes: ['id'] });
-      await Policy.upsert(policy);
+      const exists = await Policy.findByPk(policy.id, { attributes: ['id', 'presentation', 'presentationGeneratedAt', 'presentationVersion', 'presentationSourceHash', 'presentationProvider'] });
+      const sourceHash = policyPresentationSourceHash(policy);
+      const previous = exists?.toJSON?.() as any;
+      const canReuse = previous?.presentation && previous.presentationSourceHash === sourceHash && (!env.GEMINI_API_KEY || previous.presentationProvider === 'GEMINI');
+      const generated = canReuse ? { presentation: previous.presentation, provider: previous.presentationProvider } : await generatePolicyPresentation(policy);
+      await Policy.upsert({ ...policy, presentation: generated.presentation, presentationGeneratedAt: canReuse ? previous.presentationGeneratedAt : new Date(), presentationVersion: POLICY_PRESENTATION_VERSION, presentationSourceHash: sourceHash, presentationProvider: generated.provider });
       if (exists) updatedCount++; else insertedCount++;
     }
     return { source: 'YOUTH_CENTER', pageIndex: result.pageIndex, display: result.display, fetchedCount: result.items.length, totalCount: result.totalCount, insertedCount, updatedCount, skippedCount };
   }
+  async enrich(id: string) {
+    const policy = await Policy.findByPk(id);
+    if (!policy) throw notFound('Policy not found');
+    const sourceHash = policyPresentationSourceHash(policy.toJSON());
+    const generated = await generatePolicyPresentation(policy.toJSON());
+    await policy.update({ presentation: generated.presentation, presentationGeneratedAt: new Date(), presentationVersion: POLICY_PRESENTATION_VERSION, presentationSourceHash: sourceHash, presentationProvider: generated.provider });
+    return this.serialize(policy);
+  }
+  async enrichAll() {
+    const policies = await Policy.findAll();
+    let generatedCount = 0;
+    let reusedCount = 0;
+    let geminiCount = 0;
+    let fallbackCount = 0;
+    for (const policy of policies as any[]) {
+      const source = policy.toJSON();
+      const sourceHash = policyPresentationSourceHash(source);
+      const canReuse = source.presentation && source.presentationSourceHash === sourceHash && (!env.GEMINI_API_KEY || source.presentationProvider === 'GEMINI');
+      if (canReuse) { reusedCount++; if (source.presentationProvider === 'GEMINI') geminiCount++; else fallbackCount++; continue; }
+      const generated = await generatePolicyPresentation(source);
+      await policy.update({ presentation: generated.presentation, presentationGeneratedAt: new Date(), presentationVersion: POLICY_PRESENTATION_VERSION, presentationSourceHash: sourceHash, presentationProvider: generated.provider });
+      generatedCount++;
+      if (generated.provider === 'GEMINI') geminiCount++; else fallbackCount++;
+    }
+    return { totalCount: policies.length, generatedCount, reusedCount, geminiCount, fallbackCount };
+  }
   async bookmark(userId: string, policyId: string) { await this.get(policyId); const [bookmark] = await PolicyBookmark.findOrCreate({ where: { userId, policyId }, defaults: { id: newId(), userId, policyId } }); return bookmark; }
   async removeBookmark(userId: string, policyId: string) { await PolicyBookmark.destroy({ where: { userId, policyId } }); }
-  async bookmarks(userId: string) { return PolicyBookmark.findAll({ where: { userId }, include: [{ model: Policy, as: 'policy' }], order: [['createdAt', 'DESC']] }); }
+  async bookmarks(userId: string) {
+    const bookmarks = await PolicyBookmark.findAll({
+      where: { userId },
+      attributes: ['id', 'policyId', 'createdAt'],
+      include: [{
+        model: Policy,
+        as: 'policy',
+        attributes: ['id', 'title', 'category', 'provider', 'applicationStartDate', 'applicationEndDate', 'applicationUrl', 'presentation'],
+      }],
+      order: [['createdAt', 'DESC']],
+    });
+
+    return (bookmarks as any[]).map((bookmark) => {
+      const policy = bookmark.policy;
+      return {
+        bookmarkId: bookmark.id,
+        bookmarkedAt: bookmark.createdAt,
+        policy: policy ? {
+          ...this.serialize(policy),
+        } : null,
+      };
+    });
+  }
+
+  async addCalendarEvent(userId: string, policyId: string, eventDate: string) {
+    await this.get(policyId);
+    const [event] = await PolicyCalendarEvent.findOrCreate({ where: { userId, policyId }, defaults: { id: newId(), userId, policyId, eventDate } });
+    return event;
+  }
+  async removeCalendarEvent(userId: string, policyId: string) { await PolicyCalendarEvent.destroy({ where: { userId, policyId } }); }
+  async calendarEvents(userId: string) {
+    const events = await PolicyCalendarEvent.findAll({
+      where: { userId },
+      attributes: ['id', 'policyId', 'eventDate', 'note', 'createdAt'],
+      include: [{
+        model: Policy,
+        as: 'policy',
+        attributes: ['id', 'title', 'category', 'provider', 'applicationStartDate', 'applicationEndDate', 'applicationUrl', 'presentation'],
+      }],
+      order: [['eventDate', 'ASC']],
+    });
+
+    return (events as any[]).map((event) => ({
+      id: event.id,
+      eventDate: event.eventDate,
+      note: event.note,
+      createdAt: event.createdAt,
+      policy: event.policy ? this.serialize(event.policy) : null,
+    }));
+  }
 }

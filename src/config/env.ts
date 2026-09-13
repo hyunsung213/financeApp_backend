@@ -10,6 +10,8 @@ const schema = z.object({
     SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
     YOUTH_POLICY_API_KEY: z.string().min(1),
   YOUTH_POLICY_API_URL: z.string().url().default('https://www.youthcenter.go.kr/go/ythip/getPlcy'),
+  GEMINI_API_KEY: z.preprocess((value) => value || undefined, z.string().min(1).optional()),
+  GEMINI_MODEL: z.string().min(1).default('gemini-2.5-flash'),
     NOTIFICATION_ALLOWED_PACKAGES: z.string().default('com.shcard.smartpay'),
     CORS_ORIGIN: z.string().default('http://localhost:3000'),
   DB_SSL: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),

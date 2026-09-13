@@ -76,13 +76,27 @@ async function main() {
   const cycleStart = parseDateOnly(String(cycle.startDate).slice(0, 10));
   const cycleEnd = parseDateOnly(String(cycle.endDate).slice(0, 10));
   const transactions = [
-    { amount: 120000, categoryId: categories['식비'], daysAgo: 20, title: '장보기' },
-    { amount: 80000, categoryId: categories['식비'], daysAgo: 14, title: '외식' },
-    { amount: 40000, categoryId: categories['식비'], daysAgo: 10, title: '카페 및 간식' },
-    { amount: 90000, categoryId: categories['교통'], daysAgo: 7, title: '대중교통' },
-    { amount: 70000, categoryId: categories['생활필수품'], daysAgo: 4, title: '생활필수품 구매' },
-    { amount: 50000, categoryId: categories['의료·건강'], daysAgo: 2, title: '병원 및 약국' },
+    { amount: 12000, categoryId: categories['식비'], daysAgo: 6, title: '아침 식사', consumptionEvaluation: 'GOOD' },
+    { amount: 1550, categoryId: categories['교통'], daysAgo: 6, title: '지하철 이용', consumptionEvaluation: 'NORMAL' },
+    { amount: 18900, categoryId: categories['생활필수품'], daysAgo: 5, title: '세제와 휴지 구매', consumptionEvaluation: 'GOOD' },
+    { amount: 4500, categoryId: categories['식비'], daysAgo: 5, title: '커피', consumptionEvaluation: 'NORMAL' },
+    { amount: 10500, categoryId: categories['식비'], daysAgo: 4, title: '점심 도시락', consumptionEvaluation: 'GOOD' },
+    { amount: 6800, categoryId: categories['의료·건강'], daysAgo: 4, title: '약국 구매', consumptionEvaluation: 'GOOD' },
+    { amount: 1550, categoryId: categories['교통'], daysAgo: 3, title: '버스 이용', consumptionEvaluation: 'GOOD' },
+    { amount: 5500, categoryId: categories['통신'], daysAgo: 3, title: '데이터 충전', consumptionEvaluation: 'NORMAL' },
+    { amount: 23000, categoryId: categories['식비'], daysAgo: 2, title: '저녁 외식', consumptionEvaluation: 'REGRETTABLE' },
+    { amount: 3900, categoryId: categories['생활필수품'], daysAgo: 2, title: '생수 구매', consumptionEvaluation: 'GOOD' },
+    { amount: 15000, categoryId: categories['의료·건강'], daysAgo: 1, title: '헬스장 일일권', consumptionEvaluation: 'NORMAL' },
+    { amount: 3100, categoryId: categories['교통'], daysAgo: 1, title: '대중교통 이용', consumptionEvaluation: 'GOOD' },
+    { amount: 8500, categoryId: categories['식비'], daysAgo: 0, title: '점심 식사', consumptionEvaluation: 'NORMAL' },
+    { amount: 12900, categoryId: categories['생활필수품'], daysAgo: 0, title: '문구 구매', consumptionEvaluation: 'REGRETTABLE' },
+    { amount: 10900, categoryId: categories['통신'], daysAgo: 0, title: '음악 스트리밍 구독', consumptionEvaluation: 'BAD' },
   ];
+  const weeklyDailyTotals = new Map<number, number>();
+  for (const transaction of transactions) weeklyDailyTotals.set(transaction.daysAgo, (weeklyDailyTotals.get(transaction.daysAgo) ?? 0) + transaction.amount);
+  if (weeklyDailyTotals.size !== 7 || [...weeklyDailyTotals.values()].some((amount) => amount > 50000)) {
+    throw new Error('Seed transactions must cover the last 7 days with a daily expense total of 50,000 won or less');
+  }
   for (const transaction of transactions) {
     await Transaction.create({
       id: newId(),
@@ -93,6 +107,7 @@ async function main() {
       amount: String(transaction.amount),
       occurredAt: dateAtOrAfterCycleStart(today, cycleStart, transaction.daysAgo),
       merchantOrTitle: `[SEED] ${transaction.title}`,
+      consumptionEvaluation: transaction.consumptionEvaluation,
       source: 'MANUAL',
       status: 'CONFIRMED',
       userEdited: false,
@@ -137,11 +152,11 @@ async function main() {
   }
 
   const result = (await new ReportService().context(user.id, today)).result;
-  const expectedRemaining = 500000;
+  const expectedRemaining = 811400;
   const expectedRecommended = Math.floor(expectedRemaining / daysInclusive(today, cycleEnd));
   const checks = {
     flexibleBudget: result.flexibleBudget === 1000000,
-    flexibleSpent: result.flexibleSpent === 450000,
+    flexibleSpent: result.flexibleSpent === 138600,
     reservedScheduledAmount: result.reservedScheduledAmount === 50000,
     nonFlexibleOverage: result.nonFlexibleOverage === 0,
     remainingFlexibleAmount: result.remainingFlexibleAmount === expectedRemaining,

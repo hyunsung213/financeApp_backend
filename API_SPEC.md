@@ -28,6 +28,8 @@ Authorization: Bearer <SUPABASE_ACCESS_TOKEN>
 - `/api/categories/*`
 - `/api/notifications/*`
 - `/api/policies/bookmarks`
+- `/api/policies/enrich-all`
+- `/api/policies/:id/enrich`
 - `/api/policies/:id/bookmark`
 
 정책 검색과 정책 상세 조회는 인증 없이 사용할 수 있습니다.
@@ -131,6 +133,8 @@ Authorization: Bearer <SUPABASE_ACCESS_TOKEN>
   }
 }
 ```
+
+`today.remainingToday`는 `recommendedAmount - spentAmount`로 계산되며, 오늘 권장액을 초과해 사용한 경우 음수로 반환될 수 있습니다. 프론트에서는 음수일 때 초과 지출 금액으로 표시하면 됩니다.
 
 `pace.status` 값:
 
@@ -288,6 +292,7 @@ Request body:
   "occurredAt": "2026-08-16",
   "merchantOrTitle": "점심",
   "memo": "회사 근처 식당",
+  "consumptionEvaluation": "GOOD",
   "source": "MANUAL",
   "status": "CONFIRMED"
 }
@@ -298,6 +303,17 @@ Request body:
 `source`: `MANUAL`, `AUTO`, `RECEIPT`, `FIXED`
 
 `status`: `CONFIRMED`, `PENDING`, `EXCLUDED`
+
+`consumptionEvaluation`은 선택값입니다. 값을 보내지 않으면 `null`로 저장됩니다.
+
+| 값 | 표시 문구 |
+|---|---|
+| `GOOD` | 좋음 |
+| `NORMAL` | 보통 |
+| `REGRETTABLE` | 아쉬움 |
+| `BAD` | 나쁨 |
+
+`PATCH`에서 `null`을 보내면 기존 소비 평가를 제거할 수 있습니다.
 
 `amount`는 0보다 큰 정수입니다.
 
@@ -338,6 +354,7 @@ GET /api/transactions?startDate=2026-08-01&endDate=2026-08-31&type=EXPENSE&page=
         "occurredAt": "2026-08-16",
         "merchantOrTitle": "점심",
         "memo": "회사 근처 식당",
+        "consumptionEvaluation": "GOOD",
         "source": "MANUAL",
         "status": "CONFIRMED",
         "userEdited": true,
@@ -366,6 +383,7 @@ GET /api/transactions?startDate=2026-08-01&endDate=2026-08-31&type=EXPENSE&page=
 {
   "amount": 13500,
   "memo": "수정된 메모",
+  "consumptionEvaluation": "REGRETTABLE",
   "status": "CONFIRMED"
 }
 ```
@@ -410,21 +428,43 @@ GET /api/transactions?startDate=2026-08-01&endDate=2026-08-31&type=EXPENSE&page=
 
 선택 query: `startDate`, `endDate`
 
+`startDate`, `endDate`를 보내지 않으면 현재 소비 주기 기준으로 조회합니다. 캘린더에서 특정 월을 조회할 때는 해당 월의 첫날과 마지막 날을 전달합니다.
+
 응답:
 
 ```json
 {
   "success": true,
-  "data": [
-    {
-      "date": "2026-08-16",
-      "spent": 12000,
-      "recommended": 30000,
-      "difference": -18000
-    }
-  ]
+  "data": {
+    "period": {
+      "startDate": "2026-08-01",
+      "endDate": "2026-08-31"
+    },
+    "summary": {
+      "totalIncome": 3000000,
+      "totalExpense": 46400,
+      "noSpendDays": 27,
+      "noActivityDays": 26
+    },
+    "daily": [
+      {
+        "date": "2026-08-16",
+        "income": 0,
+        "expense": 12000,
+        "spent": 12000,
+        "recommended": 30000,
+        "difference": -18000
+      }
+    ]
+  }
 }
 ```
+
+- `income`, `expense`: 해당 날짜의 `CONFIRMED` 수입·지출 합계
+- `spent`: 기존 프론트 호환을 위한 `expense` 별칭
+- `noSpendDays`: 지출이 0인 날짜 수
+- `noActivityDays`: 수입과 지출이 모두 0인 날짜 수
+- `PENDING`, `EXCLUDED` 거래는 집계하지 않습니다.
 
 ### `GET /api/reports/monthly`
 
@@ -622,7 +662,7 @@ Request body:
 
 ### `GET /api/policies`
 
-인증 없이 정책을 검색합니다.
+인증 없이 정책을 검색합니다. 각 정책에는 프론트 카드 UI에서 바로 사용할 수 있는 `presentation`이 포함됩니다.
 
 Query parameters:
 
@@ -637,7 +677,7 @@ Query parameters:
 
 ### `POST /api/policies/sync`
 
-Supabase 인증이 필요한 백엔드 전용 동기화 API입니다. 온통청년 청년정책 Open API에서 정책을 조회한 후 `Policy` 테이블에 upsert합니다. 외부 API 키는 서버 환경변수로만 관리하며 프론트엔드가 전달하지 않습니다.
+Supabase 인증이 필요한 백엔드 전용 동기화 API입니다. 온통청년 청년정책 Open API에서 정책을 조회한 후 `Policy` 테이블에 upsert하고, 정책 원문을 바탕으로 카드용 `presentation`을 생성합니다. 외부 API 키와 AI 키는 서버 환경변수로만 관리하며 프론트엔드가 전달하지 않습니다.
 
 Request body:
 
@@ -645,6 +685,71 @@ Request body:
 {
   "pageIndex": 1,
   "display": 20
+}
+```
+
+동기화 시 AI 문구를 생성할 수 있도록 서버에 `GEMINI_API_KEY`를 설정합니다. 키가 없거나 AI 호출에 실패하면 원문 기반 fallback 문구가 저장되므로 정책 동기화 자체는 계속 진행됩니다. `GEMINI_MODEL`로 사용할 모델을 변경할 수 있으며 기본값은 `gemini-2.5-flash`입니다.
+
+정책 조회 응답의 `presentation` 예시:
+
+```json
+{
+  "badgeText": "청년금융 PICK",
+  "headline": "월 50만원 저축하면 정부가 최대 12%를 더해줘요",
+  "summary": "청년의 목돈 마련을 돕는 자산형성 지원 정책입니다.",
+  "targetText": "만 19~34세 · 전국",
+  "benefitText": "월 최대 50만원 저축 시 정부 매칭 지원",
+  "applicationText": "신청기간 2026.06.22 ~ 2026.07.31 신청",
+  "categoryText": "금융･복지･문화",
+  "deadlineLabel": "D-14"
+}
+```
+
+`deadlineLabel`은 저장된 AI 결과가 아니라 `applicationEndDate`와 현재 날짜로 서버가 매번 계산합니다. 따라서 날짜가 지나면 자동으로 `마감`으로 바뀝니다.
+
+### `POST /api/policies/:id/enrich`
+
+로그인한 사용자의 정책 카드 문구를 다시 생성합니다. 정책 원문은 변경하지 않습니다. AI 키가 없거나 호출에 실패하면 fallback 문구가 반환됩니다.
+
+응답:
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "youthcenter-policy-id",
+    "title": "청년 자산형성 지원사업",
+    "applicationEndDate": "2026-07-31",
+    "presentation": {
+      "badgeText": "청년금융 PICK",
+      "headline": "월 50만원 저축하면 정부가 최대 12%를 더해줘요",
+      "summary": "청년의 목돈 마련을 돕는 자산형성 지원 정책입니다.",
+      "targetText": "만 19~34세 · 전국",
+      "benefitText": "월 최대 50만원 저축 시 정부 매칭 지원",
+      "applicationText": "신청기간 2026.06.22 ~ 2026.07.31 신청",
+      "categoryText": "금융",
+      "deadlineLabel": "D-14"
+    }
+  }
+}
+```
+
+### `POST /api/policies/enrich-all`
+
+현재 `Policy` 테이블에 저장된 모든 정책의 카드 문구를 일괄 생성합니다. 원문이 변경되지 않았고 동일한 Gemini 문구가 이미 있으면 재사용합니다.
+
+응답:
+
+```json
+{
+  "success": true,
+  "data": {
+    "totalCount": 26,
+    "generatedCount": 26,
+    "reusedCount": 0,
+    "geminiCount": 26,
+    "fallbackCount": 0
+  }
 }
 ```
 
@@ -684,7 +789,42 @@ Request body:
 
 ### `GET /api/policies/bookmarks`
 
-로그인한 사용자의 관심 정책 목록을 조회합니다.
+로그인한 사용자의 관심 정책 목록을 조회합니다. 정책 상세 API를 정책 개수만큼 추가 호출하지 않도록 정책 요약 정보를 함께 반환합니다.
+
+응답:
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "bookmarkId": "bookmark-id",
+      "bookmarkedAt": "2026-09-01T10:00:00.000Z",
+      "policy": {
+        "id": "youthcenter-policy-id",
+        "title": "청년 월세 지원",
+        "category": "주거",
+        "provider": "광주광역시",
+        "applicationStartDate": "2026-09-01",
+        "applicationEndDate": "2026-09-30",
+        "applicationUrl": "https://example.com/apply",
+        "presentation": {
+          "badgeText": "청년주거 PICK",
+          "headline": "청년의 주거비 부담을 덜어드려요",
+          "summary": "청년을 위한 주거 지원 정책입니다.",
+          "targetText": "만 19~34세 · 광주",
+          "benefitText": "주거 관련 지원 내용을 확인해보세요.",
+          "applicationText": "신청기간 2026.09.01 ~ 2026.09.30 신청",
+          "categoryText": "주거",
+          "deadlineLabel": "D-18"
+        }
+      }
+    }
+  ]
+}
+```
+
+마감일이 없는 정책의 `applicationEndDate`는 `null`입니다. 캘린더의 마감 배지는 이 필드를 기준으로 표시합니다.
 
 > 프론트 라우팅에서는 `/api/policies/bookmarks`를 `/api/policies/:id`보다 먼저 처리해야 하며, 현재 백엔드 라우터에 반영되어 있습니다.
 
