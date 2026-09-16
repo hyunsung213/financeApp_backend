@@ -317,6 +317,8 @@ Request body:
 
 `amount`는 0보다 큰 정수입니다.
 
+`consumptionEvaluation`이 실제로 값을 바꿔서 저장될 때(생성 시 값이 포함되거나, 수정 시 이전 값과 다른 값으로 바뀔 때)마다 서버가 `consumptionEvaluationUpdatedAt`을 현재 시각으로 기록합니다. 같은 값을 다시 보내거나 평가와 무관한 다른 필드만 수정하는 PATCH는 `consumptionEvaluationUpdatedAt`을 바꾸지 않습니다. `null`로 평가를 지우면 `consumptionEvaluationUpdatedAt`도 함께 `null`이 됩니다. 이 필드는 응답에만 존재하는 서버 계산 값이며 요청 body로 직접 설정할 수 없습니다.
+
 ### `GET /api/transactions`
 
 Query parameters:
@@ -328,6 +330,9 @@ Query parameters:
 | `categoryId` | string | 카테고리 필터 |
 | `type` | enum | `EXPENSE`, `INCOME`, `SAVING` |
 | `status` | enum | `CONFIRMED`, `PENDING`, `EXCLUDED` |
+| `evaluation` | comma-separated enum | `consumptionEvaluation` 필터. 예: `REGRETTABLE,BAD` |
+| `sort` | enum | 정렬 기준 컬럼: `occurredAt`(기본값), `consumptionEvaluationUpdatedAt`, `createdAt` |
+| `order` | enum | `ASC`, `DESC`(기본값) |
 | `page` | number | 기본값 1 |
 | `limit` | number | 기본값 50, 최대 100 |
 
@@ -335,6 +340,12 @@ Query parameters:
 
 ```http
 GET /api/transactions?startDate=2026-08-01&endDate=2026-08-31&type=EXPENSE&page=1&limit=20
+```
+
+"평가한 시점 기준 최신 아쉬운 소비" 조회 예 (Home "최근 소비 돌아보기" 섹션에서 사용):
+
+```http
+GET /api/transactions?type=EXPENSE&evaluation=REGRETTABLE,BAD&sort=consumptionEvaluationUpdatedAt&order=DESC&limit=5
 ```
 
 응답:
@@ -355,6 +366,7 @@ GET /api/transactions?startDate=2026-08-01&endDate=2026-08-31&type=EXPENSE&page=
         "merchantOrTitle": "점심",
         "memo": "회사 근처 식당",
         "consumptionEvaluation": "GOOD",
+        "consumptionEvaluationUpdatedAt": "2026-08-16T09:12:00.000Z",
         "source": "MANUAL",
         "status": "CONFIRMED",
         "userEdited": true,
