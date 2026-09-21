@@ -80,6 +80,8 @@ remainingToday = todayRecommended - 오늘의 확정 지출
 
 `PENDING`와 `EXCLUDED`는 공식 통계에서 제외합니다. 고정지출 occurrence가 실제 Transaction에 매칭되면 occurrence가 `PAID`가 되어 예정금과 실제 거래가 이중 차감되지 않습니다.
 
+이 브랜치는 `budget.calculationMode: "PERCENTAGE_ALLOCATION"`을 반환합니다. 활성 배분의 퍼센트 합계는 100%여야 하며, `FLEXIBLE` 배분액만 오늘 권장 사용액의 원금으로 사용합니다.
+
 ## Sequelize 모델
 
 `src/models/index.ts`에 User, UserFinanceSetting, BudgetAllocation, BudgetCycle, BudgetCycleAllocation, Category, Transaction, FixedExpense, FixedExpenseOccurrence, NotificationInbox, Policy, PolicyBookmark, PolicyCalendarEvent 모델과 관계를 정의했습니다. 금액은 PostgreSQL `BIGINT`, allocation percentage는 `DECIMAL(5,2)`로 저장합니다.

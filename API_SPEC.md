@@ -118,6 +118,7 @@ Authorization: Bearer <SUPABASE_ACCESS_TOKEN>
       "remainingToday": 21500
     },
     "budget": {
+      "calculationMode": "PERCENTAGE_ALLOCATION",
       "remainingFlexibleAmount": 536000,
       "reservedFixedAmount": 80000
     },
@@ -135,6 +136,8 @@ Authorization: Bearer <SUPABASE_ACCESS_TOKEN>
 ```
 
 `today.remainingToday`는 `recommendedAmount - spentAmount`로 계산되며, 오늘 권장액을 초과해 사용한 경우 음수로 반환될 수 있습니다. 프론트에서는 음수일 때 초과 지출 금액으로 표시하면 됩니다.
+
+`budget.calculationMode`가 `PERCENTAGE_ALLOCATION`인 이 브랜치에서는 활성 allocation의 퍼센트 합계가 100%여야 하며, `FLEXIBLE` allocation의 금액에서 확정 변동지출과 예정 고정지출을 뺀 뒤 오늘을 포함한 남은 일수로 나눕니다.
 
 `pace.status` 값:
 
