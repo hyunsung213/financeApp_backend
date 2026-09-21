@@ -6,6 +6,8 @@ import { newId } from '../utils/ids';
 import { fetchYouthPolicies, type YouthPolicySearchParams } from './youthPolicyApiService';
 import { generatePolicyPresentation, policyPresentationSourceHash, withDeadlineLabel, POLICY_PRESENTATION_VERSION } from './policyPresentationService';
 
+type PolicySyncParams = YouthPolicySearchParams & { generatePresentation?: boolean };
+
 const first = (record: Record<string, unknown>, aliases: string[]) => {
   const wanted = new Set(aliases.map((alias) => alias.replace(/[_-]/g, '').toLowerCase()));
   for (const [key, value] of Object.entries(record)) {
@@ -29,6 +31,20 @@ const dateFrom = (record: Record<string, unknown>, aliases: string[], index = 0)
 };
 
 const shortText = (value: string, maxLength: number) => value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
+
+const regionGroups = [
+  ['서울', '서울특별시'], ['부산', '부산광역시'], ['대구', '대구광역시'], ['인천', '인천광역시'],
+  ['광주', '광주광역시', '전남광주통합특별시'], ['대전', '대전광역시'], ['울산', '울산광역시'], ['세종', '세종특별자치시'],
+  ['경기', '경기도'], ['강원', '강원도', '강원특별자치도'], ['충북', '충청북도'], ['충남', '충청남도'],
+  ['전북', '전라북도', '전북특별자치도'], ['전남', '전라남도', '전남광주통합특별시'], ['경북', '경상북도'], ['경남', '경상남도'], ['제주', '제주도', '제주특별자치도'],
+];
+
+const compactRegion = (value: string) => value.replace(/\s+/g, '').toLowerCase();
+const regionFrom = (record: Record<string, unknown>) => {
+  const source = first(record, ['sprtTrgtLocal', 'sprtTrgtLocalNm', 'sprtTrgtRgn', 'region', 'rgion', 'area', 'rgtrHghrkInstCdNm', 'rgtrUpInstCdNm', 'rgtrInstCdNm']);
+  const matched = regionGroups.find((group) => group.some((alias) => compactRegion(source).includes(compactRegion(alias))));
+  return matched?.[0] ?? '전국';
+};
 
 const providerTypeFrom = (record: Record<string, unknown>): 'GOVERNMENT' | 'LOCAL_GOVERNMENT' | 'PUBLIC' | 'PRIVATE' => {
   const value = first(record, ['providerType', 'providerTypeName', 'plcyPvsnMthd', 'operInstNm', 'operInstCdNm', 'sprvsnInstCdNm', 'provider']);
@@ -55,7 +71,7 @@ const mapPolicy = (record: Record<string, unknown>) => {
     description,
     ageMin: numberFrom(record, ['sprtTrgtMinAge', 'sprtTrgtAgeL', 'ageMin', 'minAge']),
     ageMax: numberFrom(record, ['sprtTrgtMaxAge', 'sprtTrgtAgeU', 'ageMax', 'maxAge']),
-    region: shortText(first(record, ['sprtTrgtLocal', 'region', 'rgion', 'area', 'rgtrInstCdNm', 'rgtrUpInstCdNm']) || '전국', 255),
+    region: regionFrom(record),
     applicationStartDate: dateFrom(record, ['aplyStartDate', 'applicationStartDate', 'aplyYmdStart', 'aplyYmd'], 0),
     applicationEndDate: dateFrom(record, ['aplyEndDate', 'applicationEndDate', 'aplyYmdEnd', 'aplyYmd'], 1),
     applicationUrl,
@@ -64,14 +80,6 @@ const mapPolicy = (record: Record<string, unknown>) => {
   };
 };
 
-const regionGroups = [
-  ['서울', '서울특별시'], ['부산', '부산광역시'], ['대구', '대구광역시'], ['인천', '인천광역시'],
-  ['광주', '광주광역시', '전남광주통합특별시'], ['대전', '대전광역시'], ['울산', '울산광역시'], ['세종', '세종특별자치시'],
-  ['경기', '경기도'], ['강원', '강원도', '강원특별자치도'], ['충북', '충청북도'], ['충남', '충청남도'],
-  ['전북', '전라북도', '전북특별자치도'], ['전남', '전라남도', '전남광주통합특별시'], ['경북', '경상북도'], ['경남', '경상남도'], ['제주', '제주도', '제주특별자치도'],
-];
-
-const compactRegion = (value: string) => value.replace(/\s+/g, '').toLowerCase();
 const regionMatches = (policyRegion: string | null, userRegion: string) => {
   if (!policyRegion || compactRegion(policyRegion).includes('전국')) return true;
   const policy = compactRegion(policyRegion); const user = compactRegion(userRegion);
@@ -110,11 +118,13 @@ export class PolicyService {
     const matched = policies.filter((policy: any) => regionMatches(policy.region, user.region));
     return { profile: { age: Number(user.age), region: user.region }, policies: matched.map((policy: any) => this.serialize(policy)) };
   }
-  async syncFromYouthPolicyApi(params: YouthPolicySearchParams = {}) {
-    const result = await fetchYouthPolicies(params);
+  async syncFromYouthPolicyApi(params: PolicySyncParams = {}) {
+    const { generatePresentation = true, ...searchParams } = params;
+    const result = await fetchYouthPolicies(searchParams);
     let insertedCount = 0;
     let updatedCount = 0;
     let skippedCount = 0;
+    let presentationGeneratedCount = 0;
     for (const raw of result.items) {
       const policy = mapPolicy(raw);
       if (!policy) { skippedCount++; continue; }
@@ -126,17 +136,21 @@ export class PolicyService {
         continue;
       }
 
-      // Insert first so concurrent workers cannot generate the same new policy twice.
-      const sourceHash = policyPresentationSourceHash(policy);
-      const generated = await generatePolicyPresentation(policy);
-      await stored.update({ presentation: generated.presentation, presentationGeneratedAt: new Date(), presentationVersion: POLICY_PRESENTATION_VERSION, presentationSourceHash: sourceHash, presentationProvider: generated.provider });
+      if (generatePresentation) {
+        // Insert first so concurrent workers cannot generate the same new policy twice.
+        const sourceHash = policyPresentationSourceHash(policy);
+        const generated = await generatePolicyPresentation(policy);
+        await stored.update({ presentation: generated.presentation, presentationGeneratedAt: new Date(), presentationVersion: POLICY_PRESENTATION_VERSION, presentationSourceHash: sourceHash, presentationProvider: generated.provider });
+        presentationGeneratedCount++;
+      }
       insertedCount++;
     }
-    return { source: 'YOUTH_CENTER', pageIndex: result.pageIndex, display: result.display, fetchedCount: result.items.length, totalCount: result.totalCount, insertedCount, updatedCount, skippedCount };
+    return { source: 'YOUTH_CENTER', pageIndex: result.pageIndex, display: result.display, fetchedCount: result.items.length, totalCount: result.totalCount, insertedCount, updatedCount, skippedCount, presentationGeneratedCount };
   }
 
-  async syncAllFromYouthPolicyApi(params: YouthPolicySearchParams = {}) {
+  async syncAllFromYouthPolicyApi(params: PolicySyncParams = {}) {
     const display = params.display ?? 100;
+    const generatePresentation = params.generatePresentation ?? true;
     const maxPages = 1000;
     let pageIndex = 1;
     let totalCount: number | null = null;
@@ -144,21 +158,23 @@ export class PolicyService {
     let insertedCount = 0;
     let updatedCount = 0;
     let skippedCount = 0;
+    let presentationGeneratedCount = 0;
     let pagesFetched = 0;
 
     while (pageIndex <= maxPages) {
-      const page = await this.syncFromYouthPolicyApi({ pageIndex, display });
+      const page = await this.syncFromYouthPolicyApi({ pageIndex, display, generatePresentation });
       pagesFetched++;
       fetchedCount += page.fetchedCount;
       insertedCount += page.insertedCount;
       updatedCount += page.updatedCount;
       skippedCount += page.skippedCount;
+      presentationGeneratedCount += page.presentationGeneratedCount;
       if (page.totalCount !== null) totalCount = page.totalCount;
       if (page.fetchedCount === 0 || page.fetchedCount < display || (totalCount !== null && pageIndex * display >= totalCount)) break;
       pageIndex++;
     }
 
-    return { source: 'YOUTH_CENTER', pagesFetched, display, fetchedCount, totalCount, insertedCount, updatedCount, skippedCount };
+    return { source: 'YOUTH_CENTER', pagesFetched, display, fetchedCount, totalCount, insertedCount, updatedCount, skippedCount, presentationGeneratedCount };
   }
   async enrich(id: string) {
     const policy = await Policy.findByPk(id);

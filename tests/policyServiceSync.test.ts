@@ -39,3 +39,26 @@ test('fetches every page and generates presentation only for newly inserted poli
 
   jest.restoreAllMocks();
 });
+
+test('imports every page without Gemini when presentation generation is disabled', async () => {
+  jest.clearAllMocks();
+  const stored = { update: jest.fn().mockResolvedValue(undefined) };
+  const findOrCreate = jest.spyOn(Policy, 'findOrCreate').mockResolvedValueOnce([stored, true] as any);
+  (fetchYouthPolicies as jest.Mock).mockReset().mockResolvedValueOnce({
+    pageIndex: 1,
+    display: 1,
+    totalCount: 1,
+    items: [{ polyBizSecd: 'LOCAL-1', plcyNm: '경기 청년 지원', rgtrHghrkInstCdNm: '경기도' }],
+  });
+  (generatePolicyPresentation as jest.Mock).mockReset();
+
+  const result = await new PolicyService().syncAllFromYouthPolicyApi({ display: 1, generatePresentation: false });
+
+  expect(fetchYouthPolicies).toHaveBeenCalledWith({ pageIndex: 1, display: 1 });
+  expect(generatePolicyPresentation).not.toHaveBeenCalled();
+  expect(stored.update).not.toHaveBeenCalled();
+  expect(findOrCreate.mock.calls[0]?.[0].defaults).toMatchObject({ region: '경기' });
+  expect(result).toMatchObject({ pagesFetched: 1, insertedCount: 1, presentationGeneratedCount: 0 });
+
+  jest.restoreAllMocks();
+});

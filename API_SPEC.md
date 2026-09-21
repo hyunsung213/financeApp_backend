@@ -754,6 +754,16 @@ Query parameters:
 
 Supabase 인증이 필요한 백엔드 전용 동기화 API입니다. 기본값으로 온통청년 청년정책 Open API의 1페이지부터 마지막 페이지까지 지역·나이 필터 없이 조회합니다. `Policy` 테이블에 이미 존재하는 정책은 원문 필드만 갱신하고 기존 `presentation`을 유지하며, 새로 추가되는 정책만 Gemini로 카드용 `presentation`을 생성합니다. 외부 API 키와 AI 키는 서버 환경변수로만 관리하며 프론트엔드가 전달하지 않습니다.
 
+Gemini 호출 없이 원문만 전체 적재하려면 아래처럼 `generatePresentation`을 `false`로 보냅니다. 이 경우 조회 응답은 원문 기반 fallback 카드 문구를 반환합니다.
+
+```json
+{
+  "allPages": true,
+  "display": 100,
+  "generatePresentation": false
+}
+```
+
 Request body:
 
 ```json
@@ -845,7 +855,8 @@ Request body:
     "totalCount": 2720,
     "insertedCount": 12,
     "updatedCount": 2708,
-    "skippedCount": 0
+    "skippedCount": 0,
+    "presentationGeneratedCount": 0
   }
 }
 ```
