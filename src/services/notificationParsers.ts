@@ -38,11 +38,25 @@ const genericMerchantPatterns = [
 ];
 
 const commonCategoryRules = [
-  { pattern: /스타벅스|이디야|투썸|커피|카페|식당|배달|쿠팡|마켓컬리|이마트|홈플러스/i, categoryId: CATEGORY_IDS.EXPENSE_FOOD },
-  { pattern: /버스|지하철|택시|주유|주차|고속도로|교통/i, categoryId: CATEGORY_IDS.EXPENSE_TRANSPORT },
+  { pattern: /스타벅스|이디야|투썸|커피|카페/i, categoryId: CATEGORY_IDS.EXPENSE_FOOD_CAFE },
+  { pattern: /배달|배민|요기요|쿠팡이츠/i, categoryId: CATEGORY_IDS.EXPENSE_FOOD_DELIVERY },
+  { pattern: /술집|호프|주점|맥주|소주/i, categoryId: CATEGORY_IDS.EXPENSE_FOOD_ALCOHOL },
+  { pattern: /편의점|gs25|cu|세븐일레븐|이마트24/i, categoryId: CATEGORY_IDS.EXPENSE_FOOD_CONVENIENCE },
+  { pattern: /과자|간식|디저트|베이커리|아이스크림/i, categoryId: CATEGORY_IDS.EXPENSE_FOOD_SNACK },
+  { pattern: /식당|레스토랑|구내식당|점심|저녁|아침/i, categoryId: CATEGORY_IDS.EXPENSE_FOOD_MEAL },
+  { pattern: /마트|장보기|쿠팡|마켓컬리|이마트|홈플러스/i, categoryId: CATEGORY_IDS.EXPENSE_LIVING_GROCERY },
+  { pattern: /택시|카카오택시|타다/i, categoryId: CATEGORY_IDS.EXPENSE_TRANSPORT_TAXI },
+  { pattern: /주유|고속도로|하이패스/i, categoryId: CATEGORY_IDS.EXPENSE_TRANSPORT_FUEL },
+  { pattern: /주차/i, categoryId: CATEGORY_IDS.EXPENSE_TRANSPORT_PARKING },
+  { pattern: /정비|세차|타이어|차량관리/i, categoryId: CATEGORY_IDS.EXPENSE_TRANSPORT_MAINTENANCE },
+  { pattern: /기차|철도|시외버스|고속버스/i, categoryId: CATEGORY_IDS.EXPENSE_TRANSPORT_INTERCITY },
+  { pattern: /버스|지하철|교통/i, categoryId: CATEGORY_IDS.EXPENSE_TRANSPORT_PUBLIC },
   { pattern: /통신|휴대폰|인터넷|iptv|sk텔레콤|kt|lg유플러스/i, categoryId: CATEGORY_IDS.EXPENSE_COMMUNICATION },
-  { pattern: /병원|의원|약국|치과|한의원/i, categoryId: CATEGORY_IDS.EXPENSE_HEALTH },
-  { pattern: /월세|관리비|전기|가스|수도/i, categoryId: CATEGORY_IDS.EXPENSE_HOUSING },
+  { pattern: /월세|임대료|주거/i, categoryId: CATEGORY_IDS.EXPENSE_HOUSING },
+  { pattern: /관리비|전기|가스|수도|공과금/i, categoryId: CATEGORY_IDS.EXPENSE_LIVING_UTILITIES },
+  { pattern: /약국|약방/i, categoryId: CATEGORY_IDS.EXPENSE_HEALTH_PHARMACY },
+  { pattern: /병원|의원|치과|한의원/i, categoryId: CATEGORY_IDS.EXPENSE_HEALTH_HOSPITAL },
+  { pattern: /헬스|필라테스|요가|운동/i, categoryId: CATEGORY_IDS.EXPENSE_HEALTH_EXERCISE },
 ];
 
 const template = (app: string, eventPatterns: NotificationTemplate['eventPatterns']): NotificationTemplate => ({

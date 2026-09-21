@@ -118,15 +118,47 @@ export class PolicyService {
     for (const raw of result.items) {
       const policy = mapPolicy(raw);
       if (!policy) { skippedCount++; continue; }
-      const exists = await Policy.findByPk(policy.id, { attributes: ['id', 'presentation', 'presentationGeneratedAt', 'presentationVersion', 'presentationSourceHash', 'presentationProvider'] });
+      const [stored, created] = await Policy.findOrCreate({ where: { id: policy.id }, defaults: policy });
+      if (!created) {
+        // Existing policies are refreshed without spending another Gemini request.
+        await stored.update(policy);
+        updatedCount++;
+        continue;
+      }
+
+      // Insert first so concurrent workers cannot generate the same new policy twice.
       const sourceHash = policyPresentationSourceHash(policy);
-      const previous = exists?.toJSON?.() as any;
-      const canReuse = previous?.presentation && previous.presentationSourceHash === sourceHash && (!env.GEMINI_API_KEY || previous.presentationProvider === 'GEMINI');
-      const generated = canReuse ? { presentation: previous.presentation, provider: previous.presentationProvider } : await generatePolicyPresentation(policy);
-      await Policy.upsert({ ...policy, presentation: generated.presentation, presentationGeneratedAt: canReuse ? previous.presentationGeneratedAt : new Date(), presentationVersion: POLICY_PRESENTATION_VERSION, presentationSourceHash: sourceHash, presentationProvider: generated.provider });
-      if (exists) updatedCount++; else insertedCount++;
+      const generated = await generatePolicyPresentation(policy);
+      await stored.update({ presentation: generated.presentation, presentationGeneratedAt: new Date(), presentationVersion: POLICY_PRESENTATION_VERSION, presentationSourceHash: sourceHash, presentationProvider: generated.provider });
+      insertedCount++;
     }
     return { source: 'YOUTH_CENTER', pageIndex: result.pageIndex, display: result.display, fetchedCount: result.items.length, totalCount: result.totalCount, insertedCount, updatedCount, skippedCount };
+  }
+
+  async syncAllFromYouthPolicyApi(params: YouthPolicySearchParams = {}) {
+    const display = params.display ?? 100;
+    const maxPages = 1000;
+    let pageIndex = 1;
+    let totalCount: number | null = null;
+    let fetchedCount = 0;
+    let insertedCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+    let pagesFetched = 0;
+
+    while (pageIndex <= maxPages) {
+      const page = await this.syncFromYouthPolicyApi({ pageIndex, display });
+      pagesFetched++;
+      fetchedCount += page.fetchedCount;
+      insertedCount += page.insertedCount;
+      updatedCount += page.updatedCount;
+      skippedCount += page.skippedCount;
+      if (page.totalCount !== null) totalCount = page.totalCount;
+      if (page.fetchedCount === 0 || page.fetchedCount < display || (totalCount !== null && pageIndex * display >= totalCount)) break;
+      pageIndex++;
+    }
+
+    return { source: 'YOUTH_CENTER', pagesFetched, display, fetchedCount, totalCount, insertedCount, updatedCount, skippedCount };
   }
   async enrich(id: string) {
     const policy = await Policy.findByPk(id);

@@ -235,48 +235,120 @@ Request body는 `POST` body의 일부 필드만 전달할 수 있습니다.
 
 ### `GET /api/categories`
 
-시스템 카테고리와 로그인한 사용자의 사용자 정의 카테고리를 반환합니다.
+시스템 기본 카테고리와 현재 사용자에게 적용되는 사용자 정의/수정 카테고리를 평면 목록으로 반환합니다. 시스템 카테고리는 고정 ID를 사용하며, 사용자가 시스템 카테고리를 수정하면 해당 사용자에게만 override 카테고리가 생성됩니다.
 
-시스템 카테고리는 고정 ID를 사용합니다. 프론트엔드는 이름이 아니라 `id`를 저장하고 거래·고정지출 등록 시 `categoryId`로 전달해야 합니다.
+응답 항목 주요 필드:
 
-대분류 ID:
-
-| ID | 이름 |
+| 필드 | 설명 |
 |---|---|
-| `core.saving` | 저축 |
-| `core.investment` | 투자 |
-| `core.expense` | 지출 |
-| `core.income` | 수입 |
+| `id` | 거래 등록 시 전달할 카테고리 ID |
+| `name` | 현재 사용자에게 표시할 이름 |
+| `type` | `EXPENSE`, `INCOME`, `SAVING` |
+| `purposeType` | `GENERAL`, `SAVING`, `INVESTMENT` |
+| `parentCategoryId` | 대분류 ID. 대분류면 `null` |
+| `ownerUserId` | 시스템이면 `null`, 사용자 카테고리면 사용자 ID |
+| `isSystem` | 시스템 기본 카테고리 여부 |
+| `isCustom` | 현재 사용자 소유 카테고리 여부 |
+| `systemCategoryId` | 시스템 카테고리 수정본이면 원본 시스템 ID, 아니면 `null` |
 
-지출 소분류 ID:
+기본 지출 계층:
 
-| ID | 이름 |
-|---|---|
-| `core.expense.housing` | 주거 |
-| `core.expense.food` | 식비 |
-| `core.expense.transport` | 교통 |
-| `core.expense.communication` | 통신 |
-| `core.expense.daily-necessities` | 생활필수품 |
-| `core.expense.health` | 의료·건강 |
-| `core.expense.insurance-tax` | 보험·세금 |
-| `core.expense.debt-repayment` | 부채상환 |
+```text
+식비       → 식사 / 배달 / 카페 / 간식 / 술 / 편의점
+교통       → 대중교통 / 택시 / 기차·버스 / 주유 / 주차 / 차량관리
+생활       → 생필품 / 마트·장보기 / 통신비 / 공과금 / 주거비 / 구독
+쇼핑       → 의류 / 신발·잡화 / 화장품·미용 / 전자기기 / 가구·인테리어 / 기타쇼핑
+여가·문화  → 영화·공연 / 게임 / 취미 / 여행 / 스포츠 / 콘텐츠
+건강       → 병원 / 약국 / 운동 / 건강관리
+교육·자기계발 → 도서 / 강의 / 학원 / 자격증 / 학비
+모임·관계  → 친구·모임 / 데이트 / 선물 / 경조사 / 회비
+금융       → 수수료 / 이자 / 세금 / 보험 / 대출상환
+기타       → 기타지출 / 미분류
+```
 
-### `POST /api/categories`
+프론트엔드는 이름 대신 `id`를 저장하고 거래·고정지출 등록 시 `categoryId`로 전달해야 합니다. 대분류와 중분류를 구분해 표시하려면 `parentCategoryId === null`인 항목을 대분류로 사용합니다.
 
-Request body:
+### `GET /api/categories/tree`
+
+동일한 카테고리를 `children` 배열로 중첩해 반환합니다. 화면에서 대분류 → 중분류 선택 UI를 만들 때 사용합니다.
+
+응답 예시:
 
 ```json
 {
-  "name": "운동",
-  "type": "EXPENSE",
-  "purposeType": "GENERAL",
-  "sortOrder": 10
+  "success": true,
+  "data": [
+    {
+      "id": "core.expense.food",
+      "name": "식비",
+      "type": "EXPENSE",
+      "parentCategoryId": null,
+      "isSystem": true,
+      "isCustom": false,
+      "systemCategoryId": null,
+      "children": [
+        {
+          "id": "core.expense.food.cafe",
+          "name": "카페",
+          "type": "EXPENSE",
+          "parentCategoryId": "core.expense.food",
+          "children": []
+        }
+      ]
+    }
+  ]
 }
 ```
 
-`type`: `EXPENSE`, `INCOME`, `SAVING`
+### `POST /api/categories`
 
-`purposeType`: `GENERAL`, `SAVING`, `INVESTMENT`
+사용자 소유 카테고리를 새로 만듭니다. `parentCategoryId`를 생략하거나 `null`로 보내면 대분류, 기존 대분류 ID를 보내면 중분류가 됩니다. `ownerUserId`, `id`, `sourceCategoryId`는 서버가 결정하므로 보내지 않습니다.
+
+Request body 예시 — 사용자 대분류:
+
+```json
+{
+  "name": "반려동물",
+  "type": "EXPENSE",
+  "purposeType": "GENERAL",
+  "parentCategoryId": null,
+  "sortOrder": 410
+}
+```
+
+Request body 예시 — 사용자 중분류:
+
+```json
+{
+  "name": "사료",
+  "type": "EXPENSE",
+  "parentCategoryId": "custom-parent-id",
+  "sortOrder": 411
+}
+```
+
+### `PATCH /api/categories/:id`
+
+사용자 카테고리를 수정하거나 시스템 카테고리의 사용자별 override를 생성합니다. 시스템 카테고리 원본은 다른 사용자에게 영향을 주지 않습니다. 기존 사용자의 거래와 고정지출이 시스템 카테고리를 사용 중이면 override ID로 자동 연결됩니다.
+
+수정 가능한 필드:
+
+```json
+{
+  "name": "외식",
+  "parentCategoryId": "core.expense.food",
+  "sortOrder": 313,
+  "isActive": true
+}
+```
+
+`type`과 `purposeType`은 카테고리 생성 후 변경할 수 없습니다. `parentCategoryId: null`은 중분류를 대분류로 이동하는 의미입니다. 대분류에 활성 중분류가 있으면 대분류를 비활성화할 수 없습니다.
+
+### `DELETE /api/categories/:id`
+
+현재 사용자 기준으로 카테고리를 비활성화하는 soft delete입니다. 시스템 카테고리를 삭제해도 시스템 원본은 삭제되지 않으며 현재 사용자에게만 숨겨집니다. 활성 중분류가 있는 대분류는 먼저 중분류를 비활성화해야 합니다.
+
+카테고리 삭제 후 기존 거래는 보존되고, 비활성 카테고리는 새 거래 등록에 사용할 수 없습니다.
 
 ## 9. 거래
 
@@ -677,18 +749,22 @@ Query parameters:
 
 ### `POST /api/policies/sync`
 
-Supabase 인증이 필요한 백엔드 전용 동기화 API입니다. 온통청년 청년정책 Open API에서 정책을 조회한 후 `Policy` 테이블에 upsert하고, 정책 원문을 바탕으로 카드용 `presentation`을 생성합니다. 외부 API 키와 AI 키는 서버 환경변수로만 관리하며 프론트엔드가 전달하지 않습니다.
+Supabase 인증이 필요한 백엔드 전용 동기화 API입니다. 기본값으로 온통청년 청년정책 Open API의 1페이지부터 마지막 페이지까지 지역·나이 필터 없이 조회합니다. `Policy` 테이블에 이미 존재하는 정책은 원문 필드만 갱신하고 기존 `presentation`을 유지하며, 새로 추가되는 정책만 Gemini로 카드용 `presentation`을 생성합니다. 외부 API 키와 AI 키는 서버 환경변수로만 관리하며 프론트엔드가 전달하지 않습니다.
 
 Request body:
 
 ```json
 {
-  "pageIndex": 1,
-  "display": 20
+  "display": 100,
+  "allPages": true
 }
 ```
 
+`display`는 페이지당 조회 수이며 최대 100입니다. `allPages`는 기본값이 `true`입니다. 특정 페이지만 수동으로 확인하려면 `allPages: false`와 `pageIndex`를 함께 보낼 수 있습니다. 자동 스케줄러는 항상 전체 페이지를 조회합니다.
+
 동기화 시 AI 문구를 생성할 수 있도록 서버에 `GEMINI_API_KEY`를 설정합니다. 키가 없거나 AI 호출에 실패하면 원문 기반 fallback 문구가 저장되므로 정책 동기화 자체는 계속 진행됩니다. `GEMINI_MODEL`로 사용할 모델을 변경할 수 있으며 기본값은 `gemini-2.5-flash`입니다.
+
+응답의 `insertedCount`는 신규 정책 수이며, 이 수에 해당하는 정책만 이번 동기화에서 카드 문구 생성 대상입니다. `updatedCount`는 기존 정책의 원문 필드만 갱신된 수입니다.
 
 정책 조회 응답의 `presentation` 예시:
 
@@ -753,8 +829,6 @@ Request body:
 }
 ```
 
-모든 필드는 선택사항이며 기본값은 `pageIndex=1`, `display=20`입니다. `display`는 최대 100입니다. 외부 API의 페이지 파라미터인 `pageNum`, `pageSize`로 변환되어 요청됩니다.
-
 응답:
 
 ```json
@@ -762,18 +836,31 @@ Request body:
   "success": true,
   "data": {
     "source": "YOUTH_CENTER",
-    "pageIndex": 1,
-    "display": 20,
-    "fetchedCount": 20,
+    "pagesFetched": 28,
+    "display": 100,
+    "fetchedCount": 2720,
     "totalCount": 2720,
-    "insertedCount": 20,
-    "updatedCount": 0,
+    "insertedCount": 12,
+    "updatedCount": 2708,
     "skippedCount": 0
   }
 }
 ```
 
 외부 API가 리다이렉트되거나 XML/JSON 형식이 잘못된 경우 `502`를 반환합니다. API 키를 평문 HTTP 리다이렉트로 전송하지 않도록 리다이렉트를 자동 추적하지 않습니다.
+
+### 자동 동기화 스케줄러
+
+서버가 실행 중이면 매일 한국시간 오후 6시(`Asia/Seoul`)에 전체 청년정책 동기화를 시작합니다. 기본 설정은 다음과 같습니다.
+
+```env
+POLICY_SYNC_SCHEDULER_ENABLED=true
+POLICY_SYNC_CRON=0 18 * * *
+POLICY_SYNC_TIMEZONE=Asia/Seoul
+POLICY_SYNC_PAGE_SIZE=100
+```
+
+스케줄러는 지역·나이 조건을 전송하지 않으므로 전국의 전체 정책을 수집합니다. 동일 정책의 ID는 `youthcenter-{외부정책ID}`로 고정되어 중복 저장되지 않으며, 이미 저장된 정책에는 Gemini 요청을 보내지 않습니다. 백엔드를 여러 인스턴스로 실행하는 경우에는 스케줄러를 한 인스턴스에서만 활성화하거나 외부 Cron을 하나만 연결해야 합니다.
 
 ### `GET /api/policies/:id`
 

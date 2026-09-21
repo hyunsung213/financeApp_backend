@@ -26,7 +26,7 @@ export const BudgetCycleAllocation = sequelize.define<any>('BudgetCycleAllocatio
 }, { tableName: 'BudgetCycleAllocation', timestamps: false, indexes: [{ unique: true, fields: ['budgetCycleId', 'allocationId'] }] });
 
 export const Category = sequelize.define<any>('Category', {
-  id: { type: DataTypes.STRING, primaryKey: true }, ownerUserId: DataTypes.UUID, parentCategoryId: DataTypes.STRING, name: { type: DataTypes.STRING, allowNull: false }, type: { type: enumType('EXPENSE', 'INCOME', 'SAVING'), allowNull: false }, purposeType: { type: enumType('GENERAL', 'SAVING', 'INVESTMENT'), allowNull: false, defaultValue: 'GENERAL' }, isActive: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true }, sortOrder: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+  id: { type: DataTypes.STRING, primaryKey: true }, ownerUserId: DataTypes.UUID, sourceCategoryId: DataTypes.STRING, parentCategoryId: DataTypes.STRING, name: { type: DataTypes.STRING, allowNull: false }, type: { type: enumType('EXPENSE', 'INCOME', 'SAVING'), allowNull: false }, purposeType: { type: enumType('GENERAL', 'SAVING', 'INVESTMENT'), allowNull: false, defaultValue: 'GENERAL' }, isActive: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true }, sortOrder: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
 }, { tableName: 'Category', ...timestamps, indexes: [{ fields: ['ownerUserId', 'isActive'] }] });
 
 export const Transaction = sequelize.define<any>('Transaction', {
