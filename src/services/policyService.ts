@@ -125,9 +125,29 @@ export class PolicyService {
     let updatedCount = 0;
     let skippedCount = 0;
     let presentationGeneratedCount = 0;
+    const policies = new Map<string, NonNullable<ReturnType<typeof mapPolicy>>>();
     for (const raw of result.items) {
       const policy = mapPolicy(raw);
       if (!policy) { skippedCount++; continue; }
+      if (policies.has(policy.id)) { skippedCount++; continue; }
+      policies.set(policy.id, policy);
+    }
+
+    if (!generatePresentation) {
+      const values = [...policies.values()];
+      const existing = values.length ? await Policy.findAll({ where: { id: { [Op.in]: values.map((policy) => policy.id) } }, attributes: ['id'] }) : [];
+      const existingIds = new Set((existing as any[]).map((policy) => policy.id));
+      if (values.length) {
+        await Policy.bulkCreate(values, {
+          updateOnDuplicate: ['title', 'provider', 'providerType', 'category', 'summary', 'description', 'ageMin', 'ageMax', 'region', 'applicationStartDate', 'applicationEndDate', 'applicationUrl', 'sourceUrl', 'dataCollectedAt', 'updatedAt'],
+        });
+      }
+      insertedCount = values.filter((policy) => !existingIds.has(policy.id)).length;
+      updatedCount = values.length - insertedCount;
+      return { source: 'YOUTH_CENTER', pageIndex: result.pageIndex, display: result.display, fetchedCount: result.items.length, totalCount: result.totalCount, insertedCount, updatedCount, skippedCount, presentationGeneratedCount };
+    }
+
+    for (const policy of policies.values()) {
       const [stored, created] = await Policy.findOrCreate({ where: { id: policy.id }, defaults: policy });
       if (!created) {
         // Existing policies are refreshed without spending another Gemini request.
