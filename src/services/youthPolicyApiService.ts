@@ -23,6 +23,7 @@ const parser = new XMLParser({
 
 const policyKeys = ['polyBizSecd', 'plcyNo', 'plcyNm', 'policyId', 'policy_id', 'id', 'title'];
 const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const maxUpstreamAttempts = 5;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
@@ -100,22 +101,22 @@ export async function fetchYouthPolicies(params: YouthPolicySearchParams = {}): 
   const query = new URLSearchParams({ apiKeyNm: env.YOUTH_POLICY_API_KEY, pageNum: String(pageIndex), pageSize: String(display) });
   url.search = query.toString();
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= maxUpstreamAttempts; attempt++) {
     let response: Response;
     try {
       response = await fetch(url, { redirect: 'manual', headers: { Accept: 'application/xml, text/xml, application/json' } });
     } catch {
-      if (attempt === 3) throw new AppError('YOUTH_POLICY_API_UNAVAILABLE', 'Youth policy API is unavailable', 502);
+      if (attempt === maxUpstreamAttempts) throw new AppError('YOUTH_POLICY_API_UNAVAILABLE', `Youth policy API is unavailable for page ${pageIndex}`, 502);
       await sleep(attempt * 500);
       continue;
     }
     if (response.status >= 300 && response.status < 400) throw new AppError('YOUTH_POLICY_API_REDIRECT', 'Youth policy API redirected the request; refusing an insecure redirect', 502);
     if (response.ok) return parseYouthPolicyPayload(await response.text(), response.headers.get('content-type'), { pageIndex, display });
-    if (response.status >= 500 && attempt < 3) {
+    if ((response.status === 400 || response.status === 429 || response.status >= 500) && attempt < maxUpstreamAttempts) {
       await sleep(attempt * 500);
       continue;
     }
-    throw new AppError('YOUTH_POLICY_API_ERROR', `Youth policy API request failed with status ${response.status}`, 502);
+    throw new AppError('YOUTH_POLICY_API_ERROR', `Youth policy API request failed for page ${pageIndex} with status ${response.status}`, 502);
   }
   throw new AppError('YOUTH_POLICY_API_UNAVAILABLE', 'Youth policy API is unavailable', 502);
 }
