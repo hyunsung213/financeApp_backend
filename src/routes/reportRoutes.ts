@@ -7,4 +7,5 @@ reportRoutes.get('/summary', controller.summary);
 reportRoutes.get('/daily', controller.daily);
 reportRoutes.get('/monthly', controller.monthly);
 reportRoutes.get('/categories', controller.categories);
+reportRoutes.get('/budget', controller.budget);
 reportRoutes.get('/pace', controller.pace);

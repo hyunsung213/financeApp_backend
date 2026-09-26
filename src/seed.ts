@@ -19,6 +19,7 @@ import { ReportService } from './services/reportService';
 import { addDays, dateOnly, daysInclusive, parseDateOnly } from './utils/dates';
 import { newId } from './utils/ids';
 import { CATEGORY_CATALOG, CATEGORY_IDS } from './constants/categoryCatalog';
+import { DEFAULT_BUDGET_PLAN, allocationTypeForCategory, budgetCategoryName, spendabilityForCategory } from './constants/budgetPlan';
 
 const seedUserId = '00000000-0000-4000-8000-000000000001';
 const legacySeedCategoryIds = ['식비', '카페', '교통', '저축', '투자', '통신', '구독', '급여'].map((name) => `seed-${name}`);
@@ -56,18 +57,23 @@ async function main() {
 
   const categories: Record<string, string> = {};
   for (const category of CATEGORY_CATALOG) {
-    await Category.upsert({ ...category, ownerUserId: null });
+    await Category.upsert({ ...category, ownerUserId: null, sourceCategoryId: null, parentCategoryId: category.parentCategoryId ?? null });
     categories[category.name] = category.id;
   }
-  categories['카페'] = CATEGORY_IDS.EXPENSE_FOOD;
-  categories['구독'] = CATEGORY_IDS.EXPENSE_COMMUNICATION;
+  await Category.update({ isActive: false }, { where: { ownerUserId: null, id: { [Op.notIn]: CATEGORY_CATALOG.map((category) => category.id) } } });
+  categories['카페'] = CATEGORY_IDS.EXPENSE_FOOD_CAFE;
+  categories['구독'] = CATEGORY_IDS.EXPENSE_LIVING_SUBSCRIPTION;
 
-  for (const [name, allocationType, percentage, spendability] of [
-    ['저축', 'SAVING', 50, 'LOCKED'],
-    ['투자', 'INVESTMENT', 10, 'LOCKED'],
-    ['지출', 'FLEXIBLE', 40, 'FLEXIBLE'],
-  ] as const) {
-    await BudgetAllocation.create({ id: newId(), userId: user.id, name, allocationType, percentage, spendability });
+  for (const allocation of DEFAULT_BUDGET_PLAN) {
+    await BudgetAllocation.create({
+      id: newId(),
+      userId: user.id,
+      categoryId: allocation.categoryId,
+      name: budgetCategoryName(allocation.categoryId),
+      allocationType: allocationTypeForCategory(allocation.categoryId),
+      percentage: allocation.percentage,
+      spendability: spendabilityForCategory(allocation.categoryId),
+    });
   }
 
   const today = new Date();
@@ -76,21 +82,21 @@ async function main() {
   const cycleStart = parseDateOnly(String(cycle.startDate).slice(0, 10));
   const cycleEnd = parseDateOnly(String(cycle.endDate).slice(0, 10));
   const transactions = [
-    { amount: 12000, categoryId: categories['식비'], daysAgo: 6, title: '아침 식사', consumptionEvaluation: 'GOOD' },
-    { amount: 1550, categoryId: categories['교통'], daysAgo: 6, title: '지하철 이용', consumptionEvaluation: 'NORMAL' },
-    { amount: 18900, categoryId: categories['생활필수품'], daysAgo: 5, title: '세제와 휴지 구매', consumptionEvaluation: 'GOOD' },
-    { amount: 4500, categoryId: categories['식비'], daysAgo: 5, title: '커피', consumptionEvaluation: 'NORMAL' },
-    { amount: 10500, categoryId: categories['식비'], daysAgo: 4, title: '점심 도시락', consumptionEvaluation: 'GOOD' },
-    { amount: 6800, categoryId: categories['의료·건강'], daysAgo: 4, title: '약국 구매', consumptionEvaluation: 'GOOD' },
-    { amount: 1550, categoryId: categories['교통'], daysAgo: 3, title: '버스 이용', consumptionEvaluation: 'GOOD' },
-    { amount: 5500, categoryId: categories['통신'], daysAgo: 3, title: '데이터 충전', consumptionEvaluation: 'NORMAL' },
-    { amount: 23000, categoryId: categories['식비'], daysAgo: 2, title: '저녁 외식', consumptionEvaluation: 'REGRETTABLE' },
-    { amount: 3900, categoryId: categories['생활필수품'], daysAgo: 2, title: '생수 구매', consumptionEvaluation: 'GOOD' },
-    { amount: 15000, categoryId: categories['의료·건강'], daysAgo: 1, title: '헬스장 일일권', consumptionEvaluation: 'NORMAL' },
-    { amount: 3100, categoryId: categories['교통'], daysAgo: 1, title: '대중교통 이용', consumptionEvaluation: 'GOOD' },
-    { amount: 8500, categoryId: categories['식비'], daysAgo: 0, title: '점심 식사', consumptionEvaluation: 'NORMAL' },
-    { amount: 12900, categoryId: categories['생활필수품'], daysAgo: 0, title: '문구 구매', consumptionEvaluation: 'REGRETTABLE' },
-    { amount: 10900, categoryId: categories['통신'], daysAgo: 0, title: '음악 스트리밍 구독', consumptionEvaluation: 'BAD' },
+    { amount: 12000, categoryId: categories['식사'], daysAgo: 6, title: '아침 식사', consumptionEvaluation: 'GOOD' },
+    { amount: 1550, categoryId: categories['대중교통'], daysAgo: 6, title: '지하철 이용', consumptionEvaluation: 'NORMAL' },
+    { amount: 18900, categoryId: categories['생필품'], daysAgo: 5, title: '세제와 휴지 구매', consumptionEvaluation: 'GOOD' },
+    { amount: 4500, categoryId: categories['카페'], daysAgo: 5, title: '커피', consumptionEvaluation: 'NORMAL' },
+    { amount: 10500, categoryId: categories['식사'], daysAgo: 4, title: '점심 도시락', consumptionEvaluation: 'GOOD' },
+    { amount: 6800, categoryId: categories['약국'], daysAgo: 4, title: '약국 구매', consumptionEvaluation: 'GOOD' },
+    { amount: 1550, categoryId: categories['대중교통'], daysAgo: 3, title: '버스 이용', consumptionEvaluation: 'GOOD' },
+    { amount: 5500, categoryId: categories['통신비'], daysAgo: 3, title: '데이터 충전', consumptionEvaluation: 'NORMAL' },
+    { amount: 23000, categoryId: categories['식사'], daysAgo: 2, title: '저녁 외식', consumptionEvaluation: 'REGRETTABLE' },
+    { amount: 3900, categoryId: categories['생필품'], daysAgo: 2, title: '생수 구매', consumptionEvaluation: 'GOOD' },
+    { amount: 15000, categoryId: categories['운동'], daysAgo: 1, title: '헬스장 일일권', consumptionEvaluation: 'NORMAL' },
+    { amount: 3100, categoryId: categories['대중교통'], daysAgo: 1, title: '대중교통 이용', consumptionEvaluation: 'GOOD' },
+    { amount: 8500, categoryId: categories['식사'], daysAgo: 0, title: '점심 식사', consumptionEvaluation: 'NORMAL' },
+    { amount: 12900, categoryId: categories['생필품'], daysAgo: 0, title: '문구 구매', consumptionEvaluation: 'REGRETTABLE' },
+    { amount: 10900, categoryId: categories['구독'], daysAgo: 0, title: '음악 스트리밍 구독', consumptionEvaluation: 'BAD' },
   ];
   const weeklyDailyTotals = new Map<number, number>();
   for (const transaction of transactions) weeklyDailyTotals.set(transaction.daysAgo, (weeklyDailyTotals.get(transaction.daysAgo) ?? 0) + transaction.amount);
@@ -115,7 +121,7 @@ async function main() {
   }
 
   const fixedExpenses = [
-    { categoryId: categories['통신'], name: '[SEED] 휴대폰 요금', amount: 50000, daysUntilDue: 6 },
+    { categoryId: categories['통신비'], name: '[SEED] 휴대폰 요금', amount: 50000, daysUntilDue: 6 },
   ];
   for (const fixed of fixedExpenses) {
     const candidateDueDate = dateOnly(addDays(today, fixed.daysUntilDue));
@@ -152,14 +158,16 @@ async function main() {
   }
 
   const result = (await new ReportService().context(user.id, today)).result;
-  const expectedRemaining = 811400;
+  const expectedRemaining = 1002800;
   const expectedRecommended = Math.floor(expectedRemaining / daysInclusive(today, cycleEnd));
   const checks = {
-    flexibleBudget: result.flexibleBudget === 1000000,
-    flexibleSpent: result.flexibleSpent === 138600,
-    reservedScheduledAmount: result.reservedScheduledAmount === 50000,
-    nonFlexibleOverage: result.nonFlexibleOverage === 0,
-    remainingFlexibleAmount: result.remainingFlexibleAmount === expectedRemaining,
+    savingBudgetAmount: result.savingBudgetAmount === 500000,
+    investmentBudgetAmount: result.investmentBudgetAmount === 250000,
+    fixedExpenseBudgetAmount: result.fixedExpenseBudgetAmount === 625000,
+    usableBudgetAmount: result.usableBudgetAmount === 1125000,
+    variableExpenseAmount: result.variableExpenseAmount === 122200,
+    fixedExpenseAmount: result.fixedExpenseAmount === 16400,
+    remainingUsableAmount: result.remainingUsableAmount === expectedRemaining,
     todayRecommendedAmount: result.todayRecommendedAmount === expectedRecommended,
   };
   if (Object.values(checks).some((passed) => !passed)) {
