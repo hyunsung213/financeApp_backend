@@ -5,6 +5,7 @@ import { BudgetCycleService } from './budgetCycleService';
 import { parseDateOnly } from '../utils/dates';
 import { CATEGORY_IDS } from '../constants/categoryCatalog';
 import { parseNotification } from './notificationParsers';
+import { CategoryService } from './categoryService';
 import { AppError } from '../utils/errors';
 import { newId } from '../utils/ids';
 
@@ -21,6 +22,7 @@ export type NotificationInput = {
 
 export class NotificationService {
   private cycles = new BudgetCycleService();
+  private categories = new CategoryService();
 
   async ingest(userId: string, input: NotificationInput) {
     if (!allowedPackages.has(input.packageName)) {
@@ -59,7 +61,7 @@ export class NotificationService {
           userId,
           budgetCycleId: cycle!.id,
           notificationId: notification.get('id'),
-          categoryId: parsed.categoryId ?? CATEGORY_IDS.EXPENSE_UNCLASSIFIED,
+          categoryId: parsed.categoryId ? await this.categories.resolveForUser(userId, parsed.categoryId) : CATEGORY_IDS.EXPENSE_UNCLASSIFIED,
           type: 'EXPENSE',
           amount: String(parsed.amount),
           occurredAt: parsed.occurredAt,

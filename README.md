@@ -26,7 +26,7 @@ tests/dailyBudgetService.test.ts
 5. `npm run dev`로 `http://localhost:4000`에서 실행합니다. Android Emulator에서는 `http://10.0.2.2:4000`을 사용합니다.
 6. `npm test`, `npm run typecheck`, `npm run build`로 검증합니다.
 
-청년정책 동기화를 사용하려면 `.env`에 `YOUTH_POLICY_API_KEY`를 설정합니다. 카드용 AI 문구까지 생성하려면 `GEMINI_API_KEY`를 추가하고, 모델은 `GEMINI_MODEL`로 지정합니다. AI 키가 없거나 호출에 실패하면 원문 기반 fallback 문구를 사용합니다. API 키는 백엔드에서만 사용하며 프론트엔드로 전달하지 않습니다. 공식 API 주소는 `YOUTH_POLICY_API_URL`로 변경할 수 있습니다.
+청년정책 동기화를 사용하려면 `.env`에 `YOUTH_POLICY_API_KEY`를 설정합니다. 서버가 실행 중이면 기본적으로 한국시간 매일 오후 6시에 지역·나이 필터 없이 전체 정책을 동기화합니다. 이미 저장된 정책은 원문만 갱신하고, 새로 추가된 정책에만 `GEMINI_API_KEY`로 카드용 AI 문구를 생성합니다. AI 키가 없거나 호출에 실패하면 원문 기반 fallback 문구를 사용합니다. API 키는 백엔드에서만 사용하며 프론트엔드로 전달하지 않습니다. 공식 API 주소는 `YOUTH_POLICY_API_URL`로 변경할 수 있습니다. `POLICY_SYNC_SCHEDULER_ENABLED=false`로 스케줄러를 끌 수 있고, `POLICY_SYNC_CRON`, `POLICY_SYNC_TIMEZONE`, `POLICY_SYNC_PAGE_SIZE`로 실행 시간을 조정할 수 있습니다.
 
 사용자 맞춤 정책은 `PUT /api/profile`로 나이와 거주지역을 저장한 뒤 `GET /api/policies/recommended`로 조회합니다. 개발용 seed 사용자는 기본값으로 25세·광주가 저장됩니다.
 
@@ -34,7 +34,7 @@ tests/dailyBudgetService.test.ts
 
 개발 중 로그인 없이 API를 호출하려면 `.env`에서 `DEV_AUTH_BYPASS=true`로 설정합니다. 이 옵션은 `NODE_ENV=production`에서는 무시되며, 개발용 seed 사용자(`seed@example.local`)로 요청을 처리합니다. 운영 배포 전 반드시 `DEV_AUTH_BYPASS=false`로 설정하세요.
 
-현재 seed 시나리오의 기준값은 월급 2,500,000원, 유연 지출 예산 1,000,000원, 최근 7일 확정 유연 지출 138,600원, 예정 고정비 50,000원입니다. 최근 7일은 식비·교통·생활필수품·의료·건강·통신 항목으로 구성되며, 하루 지출 합계는 50,000원 이하입니다. 따라서 `GET /api/home`에서 현재 날짜 기준 남은 유연 예산은 811,400원으로 계산되어야 합니다. seed 거래는 현실적인 지출 내역만 포함하며 수입·저축 이체 거래는 만들지 않습니다.
+현재 seed 시나리오는 월급 2,500,000원을 지출 대분류 10개·저축·투자에 총 100% 배분합니다. 저축 20%(500,000원), 투자 10%(250,000원), 고정지출 25%(625,000원)이며, 나머지 지출 대분류의 합계는 45%(1,125,000원)입니다. 최근 7일 거래에는 16,400원의 고정지출과 122,200원의 일반 지출이 포함되므로, 현재 사용가능 잔액은 1,002,800원입니다.
 
 ## 주요 API
 
@@ -43,38 +43,45 @@ tests/dailyBudgetService.test.ts
 | GET | `/health` | 헬스 체크 |
 | GET | `/api/home` | 오늘 권장 소비액, 남은 예산, pace, 추가 저축 예상 |
 | GET/PUT | `/api/finance/setting` | 월급/월급일 설정 |
-| GET/POST/PATCH | `/api/finance/allocations` | 예산 배분 |
+| GET/PUT | `/api/finance/budget-plan` | 지출 대분류 10개·저축·투자의 전체 월급 비율 설정 |
+| GET | `/api/finance/allocations` | 이전 예산 배분 조회(쓰기 API는 폐기) |
 | POST/GET/PATCH/DELETE | `/api/transactions` | 거래 CRUD 및 필터 |
+| PATCH | `/api/transactions/:id/refund` | 환불·정산·K-Pass 누적 등록 |
 | GET | `/api/reports/summary` | 수입/지출/저축/투자 요약 |
 | GET | `/api/reports/daily` | 일별 수입·지출/권장액/차이 및 무지출 일수 |
 | GET | `/api/reports/monthly` | 월별 추이 |
 | GET | `/api/reports/categories` | 카테고리 통계 |
+| GET | `/api/reports/budget` | 대분류별 계획·사용·잔액·사용률 |
 | GET | `/api/reports/pace` | 현재 소비속도 |
 | GET/POST | `/api/fixed-expenses` | 고정지출 및 occurrence |
 | POST | `/api/notifications` | Android 금융 알림 수신 및 카드 승인 자동 거래 등록 |
 | GET | `/api/policies` | 정책 검색/필터 |
-| POST | `/api/policies/sync` | 정책 동기화 및 카드 문구 생성 |
+| POST | `/api/policies/sync` | 전체 정책 동기화 및 신규 정책 카드 문구 생성 |
 | POST | `/api/policies/:id/enrich` | 특정 정책 카드 문구 재생성 |
 | POST | `/api/policies/enrich-all` | 저장된 전체 정책 카드 문구 일괄 생성 |
 | POST/DELETE | `/api/policies/:id/bookmark` | 관심 정책 등록/삭제 |
 | GET | `/api/policies/bookmarks` | 관심 정책 및 마감일 요약 조회 |
-| GET | `/api/categories` | 카테고리 조회 |
+| GET | `/api/categories` | 현재 사용자에게 적용되는 카테고리 평면 목록 |
+| GET | `/api/categories/tree` | 대분류·중분류 트리 조회 |
+| POST | `/api/categories` | 사용자 대분류·중분류 생성 |
+| PATCH | `/api/categories/:id` | 사용자 카테고리 수정 또는 시스템 카테고리 사용자별 override |
+| DELETE | `/api/categories/:id` | 현재 사용자 기준 카테고리 비활성화 |
 
 ## Daily Budget 계산
 
 ```text
-flexibleBudget = salarySnapshot × FLEXIBLE percentage
-remainingFlexible = flexibleBudget
-  - confirmed flexible expense
-  - non-flexible budget overage
-  - unpaid scheduled fixed expense
-todayRecommended = max(0, floor(remainingFlexible / 오늘 포함 남은 일수))
-remainingToday = todayRecommended - 오늘의 확정 지출
+categoryBudget = floor(salarySnapshot × categoryPercentage / 100)
+usableBudget = 고정지출·저축·투자를 제외한 지출 대분류 예산의 합계
+remainingUsable = usableBudget - confirmed (amount - refundedAmount) 지출
+todayRecommended = max(0, floor(remainingUsable / 오늘 포함 다음 월급일까지 남은 일수))
+remainingToday = todayRecommended - 오늘의 확정 사용가능 지출
 ```
 
 `remainingToday`는 오늘 권장액을 초과하면 음수가 될 수 있습니다. `todayRecommended` 자체는 음수가 되지 않습니다.
 
-`PENDING`와 `EXCLUDED`는 공식 통계에서 제외합니다. 고정지출 occurrence가 실제 Transaction에 매칭되면 occurrence가 `PAID`가 되어 예정금과 실제 거래가 이중 차감되지 않습니다.
+월급 예산은 지출 대분류 10개·저축·투자의 12개 항목을 사용하며, 전체 비율의 합계는 100%여야 합니다. `PENDING`, `EXCLUDED`, 다음 날짜의 확정 거래는 사용가능 잔액에서 제외됩니다. 고정지출 거래와 예정 occurrence는 사용가능 예산을 이중 차감하지 않습니다. 실제 급여 수입만 주기를 전환하며, 추가 수입은 현재 주기의 스냅샷 비율대로 각 예산을 늘립니다.
+
+Home 응답은 `budget.calculationMode: "CATEGORY_PERCENTAGE_ALLOCATION"`를 반환합니다. 새 프론트엔드는 `GET/PUT /api/finance/budget-plan`으로 전체 비율을 관리해야 합니다.
 
 ## Sequelize 모델
 

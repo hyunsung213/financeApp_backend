@@ -1,28 +1,48 @@
-import { daysInclusive } from '../utils/dates';
+import { isDailySpendableBudgetCategory, isExpenseBudgetCategory } from '../constants/budgetPlan';
+import { dateOnly, daysInclusive } from '../utils/dates';
 
-export type BudgetSpendability = 'LOCKED' | 'RESERVED' | 'FLEXIBLE';
-export type BudgetTransaction = { amount: number; type: 'EXPENSE' | 'INCOME' | 'SAVING'; status: 'CONFIRMED' | 'PENDING' | 'EXCLUDED'; spendability: BudgetSpendability };
-export type BudgetAllocationInput = { amount: number; spendability: BudgetSpendability };
+export type BudgetTransaction = {
+  amount: number;
+  refundedAmount: number;
+  type: 'EXPENSE' | 'INCOME' | 'SAVING';
+  status: 'CONFIRMED' | 'PENDING' | 'EXCLUDED';
+  budgetCategoryId?: string;
+  occurredAt: Date;
+};
 
 export type DailyBudgetInput = {
   today: Date;
   cycleStart: Date;
   cycleEnd: Date;
-  allocations: BudgetAllocationInput[];
+  salaryAmount: number;
+  allocations: Array<{ categoryId: string; amount: number }>;
   transactions: BudgetTransaction[];
-  reservedScheduledAmount?: number;
+};
+
+export type BudgetCategoryProgress = {
+  categoryId: string;
+  plannedAmount: number;
+  spentAmount: number;
+  remainingAmount: number;
+  usageRate: number;
 };
 
 export type DailyBudgetResult = {
   cycleDays: number;
   elapsedDays: number;
   remainingDays: number;
-  flexibleBudget: number;
-  reservedScheduledAmount: number;
-  flexibleSpent: number;
-  nonFlexibleOverage: number;
-  remainingFlexibleAmount: number;
+  salaryAmount: number;
+  savingBudgetAmount: number;
+  investmentBudgetAmount: number;
+  fixedExpenseBudgetAmount: number;
+  usableBudgetAmount: number;
+  variableExpenseAmount: number;
+  fixedExpenseAmount: number;
+  remainingUsableAmount: number;
+  todayVariableExpenseAmount: number;
   todayRecommendedAmount: number;
+  remainingTodayAmount: number;
+  categoryProgress: BudgetCategoryProgress[];
   budgetStatus: 'ON_TRACK' | 'OVER_BUDGET';
   plannedSpendToDate: number;
   actualSpendToDate: number;
@@ -42,30 +62,68 @@ export class DailyBudgetService {
     const clampedToday = input.today < input.cycleStart ? input.cycleStart : input.today > input.cycleEnd ? input.cycleEnd : input.today;
     const elapsedDays = daysInclusive(input.cycleStart, clampedToday);
     const remainingDays = Math.max(1, daysInclusive(clampedToday, input.cycleEnd));
-    const flexibleBudget = input.allocations.filter((a) => a.spendability === 'FLEXIBLE').reduce((sum, a) => sum + a.amount, 0);
-    const confirmedExpenses = input.transactions.filter((t) => t.status === 'CONFIRMED' && t.type === 'EXPENSE');
-    const flexibleSpent = confirmedExpenses.filter((t) => t.spendability === 'FLEXIBLE').reduce((sum, t) => sum + t.amount, 0);
-    const lockedOrReservedSpent = confirmedExpenses.filter((t) => t.spendability !== 'FLEXIBLE').reduce((sum, t) => sum + t.amount, 0);
-    const nonFlexibleBudget = input.allocations.filter((a) => a.spendability !== 'FLEXIBLE').reduce((sum, a) => sum + a.amount, 0);
-    const nonFlexibleOverage = Math.max(0, lockedOrReservedSpent - nonFlexibleBudget);
-    const reservedScheduledAmount = Math.max(0, input.reservedScheduledAmount ?? 0);
-    const remainingFlexibleAmount = flexibleBudget - flexibleSpent - nonFlexibleOverage - reservedScheduledAmount;
-    const todayRecommendedAmount = Math.max(0, Math.floor(remainingFlexibleAmount / remainingDays));
-    const spentToday = confirmedExpenses.filter((t) => t.spendability === 'FLEXIBLE').reduce((sum, t) => sum + t.amount, 0);
-    const plannedSpendToDate = Math.floor(flexibleBudget * elapsedDays / cycleDays);
-    const actualSpendToDate = flexibleSpent;
+    const todayKey = dateOnly(clampedToday);
+    const actualAmount = (transaction: BudgetTransaction) => Math.max(0, transaction.amount - transaction.refundedAmount);
+    const confirmedExpenses = input.transactions.filter((transaction) => transaction.status === 'CONFIRMED' && transaction.type === 'EXPENSE' && dateOnly(transaction.occurredAt) <= todayKey);
+    const spentByCategory = new Map<string, number>();
+    for (const transaction of confirmedExpenses) {
+      if (!transaction.budgetCategoryId || !isExpenseBudgetCategory(transaction.budgetCategoryId)) continue;
+      spentByCategory.set(transaction.budgetCategoryId, (spentByCategory.get(transaction.budgetCategoryId) ?? 0) + actualAmount(transaction));
+    }
+
+    const allocationAmount = (categoryId: string) => input.allocations.find((allocation) => allocation.categoryId === categoryId)?.amount ?? 0;
+    const categoryProgress = input.allocations.filter((allocation) => isExpenseBudgetCategory(allocation.categoryId)).map((allocation) => {
+      const spentAmount = spentByCategory.get(allocation.categoryId) ?? 0;
+      return { categoryId: allocation.categoryId, plannedAmount: allocation.amount, spentAmount, remainingAmount: allocation.amount - spentAmount, usageRate: allocation.amount ? spentAmount / allocation.amount * 100 : 0 };
+    });
+    const usableProgress = categoryProgress.filter((category) => isDailySpendableBudgetCategory(category.categoryId));
+    const usableBudgetAmount = usableProgress.reduce((sum, category) => sum + category.plannedAmount, 0);
+    const variableExpenseAmount = usableProgress.reduce((sum, category) => sum + category.spentAmount, 0);
+    const fixedExpenseBudgetAmount = allocationAmount('core.expense.fixed');
+    const fixedExpenseAmount = spentByCategory.get('core.expense.fixed') ?? 0;
+    const savingBudgetAmount = allocationAmount('core.saving');
+    const investmentBudgetAmount = allocationAmount('core.investment');
+    const remainingUsableAmount = usableBudgetAmount - variableExpenseAmount;
+    const todayRecommendedAmount = Math.max(0, Math.floor(remainingUsableAmount / remainingDays));
+    const todayVariableExpenseAmount = confirmedExpenses.filter((transaction) => transaction.budgetCategoryId !== undefined && isDailySpendableBudgetCategory(transaction.budgetCategoryId) && dateOnly(transaction.occurredAt) === todayKey).reduce((sum, transaction) => sum + actualAmount(transaction), 0);
+    const remainingTodayAmount = todayRecommendedAmount - todayVariableExpenseAmount;
+    const plannedSpendToDate = Math.floor(usableBudgetAmount * elapsedDays / cycleDays);
+    const actualSpendToDate = variableExpenseAmount;
     const difference = plannedSpendToDate - actualSpendToDate;
-    const tolerance = Math.max(1, Math.floor(flexibleBudget * 0.02));
+    const tolerance = Math.max(1, Math.floor(usableBudgetAmount * 0.02));
     const paceStatus = difference > tolerance ? 'UNDER' : difference < -tolerance ? 'OVER' : 'ON_TRACK';
-    const currentDailyAverage = Math.floor(flexibleSpent / elapsedDays);
-    const projectedTotalSpend = flexibleSpent + currentDailyAverage * Math.max(0, cycleDays - elapsedDays);
-    const expectedRemainingAmount = flexibleBudget - projectedTotalSpend - nonFlexibleOverage - reservedScheduledAmount;
+    const currentDailyAverage = Math.floor(variableExpenseAmount / elapsedDays);
+    const projectedTotalSpend = variableExpenseAmount + currentDailyAverage * Math.max(0, cycleDays - elapsedDays);
+    const expectedRemainingAmount = usableBudgetAmount - projectedTotalSpend;
     const confidence = elapsedDays <= 2 ? 'LOW' : elapsedDays <= 7 ? 'MEDIUM' : 'HIGH';
+
     return {
-      cycleDays, elapsedDays, remainingDays, flexibleBudget, reservedScheduledAmount, flexibleSpent, nonFlexibleOverage,
-      remainingFlexibleAmount, todayRecommendedAmount, budgetStatus: remainingFlexibleAmount < 0 ? 'OVER_BUDGET' : 'ON_TRACK',
-      plannedSpendToDate, actualSpendToDate, difference, paceStatus, currentDailyAverage, projectedTotalSpend,
-      expectedRemainingAmount, potentialExtraSaving: Math.max(0, expectedRemainingAmount), confidence, sampleDays: elapsedDays,
+      cycleDays,
+      elapsedDays,
+      remainingDays,
+      salaryAmount: input.salaryAmount,
+      savingBudgetAmount,
+      investmentBudgetAmount,
+      fixedExpenseBudgetAmount,
+      usableBudgetAmount,
+      variableExpenseAmount,
+      fixedExpenseAmount,
+      remainingUsableAmount,
+      todayVariableExpenseAmount,
+      todayRecommendedAmount,
+      remainingTodayAmount,
+      categoryProgress,
+      budgetStatus: remainingUsableAmount < 0 ? 'OVER_BUDGET' : 'ON_TRACK',
+      plannedSpendToDate,
+      actualSpendToDate,
+      difference,
+      paceStatus,
+      currentDailyAverage,
+      projectedTotalSpend,
+      expectedRemainingAmount,
+      potentialExtraSaving: Math.max(0, expectedRemainingAmount),
+      confidence,
+      sampleDays: elapsedDays,
     };
   }
 }

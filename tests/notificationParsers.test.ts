@@ -13,7 +13,7 @@ test('parses a Shinhan card approval notification into an expense', () => {
     amount: 12000,
     occurredAt: '2026-08-31',
     merchant: '스타벅스강남점',
-    categoryId: 'core.expense.food',
+    categoryId: 'core.expense.food.cafe',
     parseStatus: 'PARSED',
   });
 });

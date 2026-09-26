@@ -119,8 +119,15 @@ Authorization: Bearer <SUPABASE_ACCESS_TOKEN>
       "remainingToday": 21500
     },
     "budget": {
-      "remainingFlexibleAmount": 536000,
-      "reservedFixedAmount": 80000
+      "calculationMode": "CATEGORY_PERCENTAGE_ALLOCATION",
+      "salaryAmount": 3000000,
+      "savingBudgetAmount": 600000,
+      "investmentBudgetAmount": 300000,
+      "fixedExpenseBudgetAmount": 750000,
+      "usableBudgetAmount": 1350000,
+      "variableExpenseAmount": 195000,
+      "fixedExpenseAmount": 480000,
+      "remainingUsableAmount": 1005000
     },
     "pace": {
       "status": "UNDER",
@@ -136,6 +143,10 @@ Authorization: Bearer <SUPABASE_ACCESS_TOKEN>
 ```
 
 `today.remainingToday`는 `recommendedAmount - spentAmount`로 계산되며, 오늘 권장액을 초과해 사용한 경우 음수로 반환될 수 있습니다. 프론트에서는 음수일 때 초과 지출 금액으로 표시하면 됩니다.
+
+일일 예산과 월급일 계산의 날짜 기준은 `Asia/Seoul`입니다.
+
+`budget.calculationMode`는 `CATEGORY_PERCENTAGE_ALLOCATION`입니다. 월급 전체를 지출 대분류 10개·저축·투자의 12개 비율로 나눕니다. 오늘 권장액은 고정지출·저축·투자를 제외한 지출 대분류의 남은 예산 합계를 오늘을 포함한 예상 다음 급여일까지의 일수로 나눈 값입니다. 고정지출 예정액은 별도로 차감하지 않습니다.
 
 `pace.status` 값:
 
@@ -187,7 +198,62 @@ Request body:
 - `salaryDay`: 1~31
 - `reportingStartDay`: 1~31
 
-## 7. 예산 배분
+## 7. 월급 예산 계획
+
+프론트엔드는 아래 전용 API로 지출 대분류 10개·저축·투자의 월급 배분 전체를 한 번에 저장해야 합니다. 저장한 비율은 다음 실제 급여 등록으로 시작되는 주기부터 적용됩니다.
+
+### `GET /api/finance/budget-plan`
+
+현재 월급과 12개 배분 항목을 조회합니다. 아직 설정하지 않은 경우 `isConfigured: false`와 기본 예시 비율을 반환합니다.
+
+```json
+{
+  "success": true,
+  "data": {
+    "isConfigured": true,
+    "salaryAmount": 3000000,
+    "allocations": [
+      { "categoryId": "core.expense.food", "name": "식비", "percentage": 15 },
+      { "categoryId": "core.expense.fixed", "name": "고정지출", "percentage": 25 },
+      { "categoryId": "core.saving", "name": "저축", "percentage": 20 },
+      { "categoryId": "core.investment", "name": "투자", "percentage": 10 }
+    ]
+  }
+}
+```
+
+`isConfigured: false`이면 먼저 `PUT /api/finance/budget-plan`을 호출해야 합니다.
+
+### `PUT /api/finance/budget-plan`
+
+```json
+{
+  "allocations": [
+    { "categoryId": "core.expense.food", "percentage": 15 },
+    { "categoryId": "core.expense.transport", "percentage": 8 },
+    { "categoryId": "core.expense.living", "percentage": 8 },
+    { "categoryId": "core.expense.fixed", "percentage": 25 },
+    { "categoryId": "core.expense.shopping", "percentage": 4 },
+    { "categoryId": "core.expense.leisure-culture", "percentage": 4 },
+    { "categoryId": "core.expense.health", "percentage": 2 },
+    { "categoryId": "core.expense.education", "percentage": 1 },
+    { "categoryId": "core.expense.relationship", "percentage": 2 },
+    { "categoryId": "core.expense.other", "percentage": 1 },
+    { "categoryId": "core.saving", "percentage": 20 },
+    { "categoryId": "core.investment", "percentage": 10 }
+  ]
+}
+```
+
+검증 및 반영 규칙:
+
+- 12개 항목을 각각 한 번씩 포함해야 하며, 전체 합계는 정확히 100이어야 합니다.
+- 월급 설정(`PUT /api/finance/setting`)을 먼저 완료해야 합니다.
+- 유효한 현재 주기는 변경하지 않고 다음 실제 급여 입력부터 반영합니다. 기존 3분류 레거시 주기만 1회 마이그레이션합니다.
+
+## 8. 기존 예산 배분 API
+
+`/api/finance/allocations`는 이전 allocation 데이터 조회를 위해 유지합니다. `POST`와 `PATCH`는 `410 LEGACY_ALLOCATION_API_DEPRECATED`를 반환하므로, 새 화면에서는 `budget-plan` API만 사용하세요.
 
 ### `GET /api/finance/allocations`
 
@@ -236,48 +302,120 @@ Request body는 `POST` body의 일부 필드만 전달할 수 있습니다.
 
 ### `GET /api/categories`
 
-시스템 카테고리와 로그인한 사용자의 사용자 정의 카테고리를 반환합니다.
+시스템 기본 카테고리와 현재 사용자에게 적용되는 사용자 정의/수정 카테고리를 평면 목록으로 반환합니다. 시스템 카테고리는 고정 ID를 사용하며, 사용자가 시스템 카테고리를 수정하면 해당 사용자에게만 override 카테고리가 생성됩니다.
 
-시스템 카테고리는 고정 ID를 사용합니다. 프론트엔드는 이름이 아니라 `id`를 저장하고 거래·고정지출 등록 시 `categoryId`로 전달해야 합니다.
+응답 항목 주요 필드:
 
-대분류 ID:
-
-| ID | 이름 |
+| 필드 | 설명 |
 |---|---|
-| `core.saving` | 저축 |
-| `core.investment` | 투자 |
-| `core.expense` | 지출 |
-| `core.income` | 수입 |
+| `id` | 거래 등록 시 전달할 카테고리 ID |
+| `name` | 현재 사용자에게 표시할 이름 |
+| `type` | `EXPENSE`, `INCOME`, `SAVING` |
+| `purposeType` | `GENERAL`, `SAVING`, `INVESTMENT` |
+| `parentCategoryId` | 대분류 ID. 대분류면 `null` |
+| `ownerUserId` | 시스템이면 `null`, 사용자 카테고리면 사용자 ID |
+| `isSystem` | 시스템 기본 카테고리 여부 |
+| `isCustom` | 현재 사용자 소유 카테고리 여부 |
+| `systemCategoryId` | 시스템 카테고리 수정본이면 원본 시스템 ID, 아니면 `null` |
 
-지출 소분류 ID:
+기본 지출 계층:
 
-| ID | 이름 |
-|---|---|
-| `core.expense.housing` | 주거 |
-| `core.expense.food` | 식비 |
-| `core.expense.transport` | 교통 |
-| `core.expense.communication` | 통신 |
-| `core.expense.daily-necessities` | 생활필수품 |
-| `core.expense.health` | 의료·건강 |
-| `core.expense.insurance-tax` | 보험·세금 |
-| `core.expense.debt-repayment` | 부채상환 |
+```text
+식비       → 식사 / 배달 / 카페 / 간식 / 술 / 편의점
+교통       → 대중교통 / 택시 / 기차·버스 / 주유 / 주차 / 차량관리
+생활       → 생필품 / 마트·장보기
+고정지출   → 통신비 / 공과금 / 주거비 / 구독 / 보험 / 대출상환 / 이자 / 세금
+쇼핑       → 의류 / 신발·잡화 / 화장품·미용 / 전자기기 / 가구·인테리어 / 기타쇼핑
+여가·문화  → 영화·공연 / 게임 / 취미 / 여행 / 스포츠 / 콘텐츠
+건강       → 병원 / 약국 / 운동 / 건강관리
+교육·자기계발 → 도서 / 강의 / 학원 / 자격증 / 학비
+모임·관계  → 친구·모임 / 데이트 / 선물 / 경조사 / 회비
+기타       → 기타지출 / 미분류 / 수수료
+```
 
-### `POST /api/categories`
+프론트엔드는 이름 대신 `id`를 저장하고 거래·고정지출 등록 시 `categoryId`로 전달해야 합니다. 대분류와 중분류를 구분해 표시하려면 `parentCategoryId === null`인 항목을 대분류로 사용합니다.
 
-Request body:
+### `GET /api/categories/tree`
+
+동일한 카테고리를 `children` 배열로 중첩해 반환합니다. 화면에서 대분류 → 중분류 선택 UI를 만들 때 사용합니다.
+
+응답 예시:
 
 ```json
 {
-  "name": "운동",
-  "type": "EXPENSE",
-  "purposeType": "GENERAL",
-  "sortOrder": 10
+  "success": true,
+  "data": [
+    {
+      "id": "core.expense.food",
+      "name": "식비",
+      "type": "EXPENSE",
+      "parentCategoryId": null,
+      "isSystem": true,
+      "isCustom": false,
+      "systemCategoryId": null,
+      "children": [
+        {
+          "id": "core.expense.food.cafe",
+          "name": "카페",
+          "type": "EXPENSE",
+          "parentCategoryId": "core.expense.food",
+          "children": []
+        }
+      ]
+    }
+  ]
 }
 ```
 
-`type`: `EXPENSE`, `INCOME`, `SAVING`
+### `POST /api/categories`
 
-`purposeType`: `GENERAL`, `SAVING`, `INVESTMENT`
+사용자 소유 카테고리를 새로 만듭니다. `parentCategoryId`를 생략하거나 `null`로 보내면 대분류, 기존 대분류 ID를 보내면 중분류가 됩니다. `ownerUserId`, `id`, `sourceCategoryId`는 서버가 결정하므로 보내지 않습니다.
+
+Request body 예시 — 사용자 대분류:
+
+```json
+{
+  "name": "반려동물",
+  "type": "EXPENSE",
+  "purposeType": "GENERAL",
+  "parentCategoryId": null,
+  "sortOrder": 410
+}
+```
+
+Request body 예시 — 사용자 중분류:
+
+```json
+{
+  "name": "사료",
+  "type": "EXPENSE",
+  "parentCategoryId": "custom-parent-id",
+  "sortOrder": 411
+}
+```
+
+### `PATCH /api/categories/:id`
+
+사용자 카테고리를 수정하거나 시스템 카테고리의 사용자별 override를 생성합니다. 시스템 카테고리 원본은 다른 사용자에게 영향을 주지 않습니다. 기존 사용자의 거래와 고정지출이 시스템 카테고리를 사용 중이면 override ID로 자동 연결됩니다.
+
+수정 가능한 필드:
+
+```json
+{
+  "name": "외식",
+  "parentCategoryId": "core.expense.food",
+  "sortOrder": 313,
+  "isActive": true
+}
+```
+
+`type`과 `purposeType`은 카테고리 생성 후 변경할 수 없습니다. `parentCategoryId: null`은 중분류를 대분류로 이동하는 의미입니다. 대분류에 활성 중분류가 있으면 대분류를 비활성화할 수 없습니다.
+
+### `DELETE /api/categories/:id`
+
+현재 사용자 기준으로 카테고리를 비활성화하는 soft delete입니다. 시스템 카테고리를 삭제해도 시스템 원본은 삭제되지 않으며 현재 사용자에게만 숨겨집니다. 활성 중분류가 있는 대분류는 먼저 중분류를 비활성화해야 합니다.
+
+카테고리 삭제 후 기존 거래는 보존되고, 비활성 카테고리는 새 거래 등록에 사용할 수 없습니다.
 
 ## 9. 거래
 
@@ -322,6 +460,8 @@ Request body:
 
 `consumptionEvaluation`이 실제로 값을 바꿔서 저장될 때(생성 시 값이 포함되거나, 수정 시 이전 값과 다른 값으로 바뀔 때)마다 서버가 `consumptionEvaluationUpdatedAt`을 현재 시각으로 기록합니다. 같은 값을 다시 보내거나 평가와 무관한 다른 필드만 수정하는 PATCH는 `consumptionEvaluationUpdatedAt`을 바꾸지 않습니다. `null`로 평가를 지우면 `consumptionEvaluationUpdatedAt`도 함께 `null`이 됩니다. 이 필드는 응답에만 존재하는 서버 계산 값이며 요청 body로 직접 설정할 수 없습니다.
 
+`core.income.salary` 카테고리의 확정 수입은 실제 급여로 처리되어 기존 활성 주기를 닫고 새 주기를 시작합니다. 다른 확정 수입은 추가수입으로 처리되어 현재 주기의 12개 예산을 해당 주기에 저장된 비율대로 증액합니다.
+
 ### `GET /api/transactions`
 
 Query parameters:
@@ -365,6 +505,8 @@ GET /api/transactions?type=EXPENSE&evaluation=REGRETTABLE,BAD&sort=consumptionEv
         "categoryId": "category-id",
         "type": "EXPENSE",
         "amount": "12000",
+        "refundedAmount": "0",
+        "effectiveAmount": 12000,
         "occurredAt": "2026-08-16",
         "merchantOrTitle": "점심",
         "memo": "회사 근처 식당",
@@ -416,9 +558,21 @@ GET /api/transactions?type=EXPENSE&evaluation=REGRETTABLE,BAD&sort=consumptionEv
 }
 ```
 
+### `PATCH /api/transactions/:id/refund`
+
+환불·정산·K-Pass로 실제 돌려받은 금액을 원 지출에 누적합니다. 별도 수입 거래를 만들지 않으며, 모든 예산·리포트 계산은 `amount - refundedAmount`를 실제 지출로 사용합니다.
+
+```json
+{
+  "amount": 20000
+}
+```
+
+누적 환불액은 원 지출 금액을 초과할 수 없습니다.
+
 ## 10. 리포트
 
-모든 공식 통계는 `status=CONFIRMED` 거래를 기준으로 계산합니다.
+모든 공식 통계는 `status=CONFIRMED` 거래를 기준으로 계산하며, 지출은 `amount - refundedAmount`를 사용합니다.
 
 ### `GET /api/reports/summary`
 
@@ -523,6 +677,12 @@ GET /api/transactions?type=EXPENSE&evaluation=REGRETTABLE,BAD&sort=consumptionEv
   ]
 }
 ```
+
+`categories`는 중분류 거래를 상위 지출 대분류로 합산합니다.
+
+### `GET /api/reports/budget`
+
+현재 급여 주기의 지출 대분류별 계획·사용·남은 금액·사용률을 반환합니다. 고정지출·저축·투자도 별도 항목으로 반환합니다.
 
 ### `GET /api/reports/pace`
 
@@ -696,18 +856,23 @@ Query parameters:
 
 ### `POST /api/policies/sync`
 
-Supabase 인증이 필요한 백엔드 전용 동기화 API입니다. 온통청년 청년정책 Open API에서 정책을 조회한 후 `Policy` 테이블에 upsert하고, 정책 원문을 바탕으로 카드용 `presentation`을 생성합니다. 외부 API 키와 AI 키는 서버 환경변수로만 관리하며 프론트엔드가 전달하지 않습니다.
+Supabase 인증이 필요한 백엔드 전용 동기화 API입니다. 기본값으로 온통청년 청년정책 Open API의 1페이지부터 마지막 페이지까지 지역·나이 필터 없이 조회합니다. `Policy` 테이블에 이미 존재하는 정책은 원문 필드만 갱신하고 기존 `presentation`을 유지하며, 새로 추가되는 정책만 Gemini로 카드용 `presentation`을 생성합니다. 외부 API 키와 AI 키는 서버 환경변수로만 관리하며 프론트엔드가 전달하지 않습니다.
 
-Request body:
+Gemini 호출 없이 원문만 전체 적재하려면 아래처럼 `generatePresentation`을 `false`로 보냅니다. 이 경우 조회 응답은 원문 기반 fallback 카드 문구를 반환합니다.
 
 ```json
 {
-  "pageIndex": 1,
-  "display": 20
+  "allPages": true,
+  "display": 100,
+  "generatePresentation": false
 }
 ```
 
+`display`는 페이지당 조회 수이며 최대 100입니다. `allPages`는 기본값이 `true`입니다. 특정 페이지만 수동으로 확인하려면 `allPages: false`와 `pageIndex`를 함께 보낼 수 있습니다. 자동 스케줄러는 항상 전체 페이지를 조회합니다.
+
 동기화 시 AI 문구를 생성할 수 있도록 서버에 `GEMINI_API_KEY`를 설정합니다. 키가 없거나 AI 호출에 실패하면 원문 기반 fallback 문구가 저장되므로 정책 동기화 자체는 계속 진행됩니다. `GEMINI_MODEL`로 사용할 모델을 변경할 수 있으며 기본값은 `gemini-2.5-flash`입니다.
+
+응답의 `insertedCount`는 신규 정책 수이며, 이 수에 해당하는 정책만 이번 동기화에서 카드 문구 생성 대상입니다. `updatedCount`는 기존 정책의 원문 필드만 갱신된 수입니다.
 
 정책 조회 응답의 `presentation` 예시:
 
@@ -772,8 +937,6 @@ Request body:
 }
 ```
 
-모든 필드는 선택사항이며 기본값은 `pageIndex=1`, `display=20`입니다. `display`는 최대 100입니다. 외부 API의 페이지 파라미터인 `pageNum`, `pageSize`로 변환되어 요청됩니다.
-
 응답:
 
 ```json
@@ -781,18 +944,32 @@ Request body:
   "success": true,
   "data": {
     "source": "YOUTH_CENTER",
-    "pageIndex": 1,
-    "display": 20,
-    "fetchedCount": 20,
+    "pagesFetched": 28,
+    "display": 100,
+    "fetchedCount": 2720,
     "totalCount": 2720,
-    "insertedCount": 20,
-    "updatedCount": 0,
-    "skippedCount": 0
+    "insertedCount": 12,
+    "updatedCount": 2708,
+    "skippedCount": 0,
+    "presentationGeneratedCount": 0
   }
 }
 ```
 
 외부 API가 리다이렉트되거나 XML/JSON 형식이 잘못된 경우 `502`를 반환합니다. API 키를 평문 HTTP 리다이렉트로 전송하지 않도록 리다이렉트를 자동 추적하지 않습니다.
+
+### 자동 동기화 스케줄러
+
+서버가 실행 중이면 매일 한국시간 오후 6시(`Asia/Seoul`)에 전체 청년정책 동기화를 시작합니다. 기본 설정은 다음과 같습니다.
+
+```env
+POLICY_SYNC_SCHEDULER_ENABLED=true
+POLICY_SYNC_CRON=0 18 * * *
+POLICY_SYNC_TIMEZONE=Asia/Seoul
+POLICY_SYNC_PAGE_SIZE=100
+```
+
+스케줄러는 지역·나이 조건을 전송하지 않으므로 전국의 전체 정책을 수집합니다. 동일 정책의 ID는 `youthcenter-{외부정책ID}`로 고정되어 중복 저장되지 않으며, 이미 저장된 정책에는 Gemini 요청을 보내지 않습니다. 백엔드를 여러 인스턴스로 실행하는 경우에는 스케줄러를 한 인스턴스에서만 활성화하거나 외부 Cron을 하나만 연결해야 합니다.
 
 ### `GET /api/policies/:id`
 
