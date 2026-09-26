@@ -6,16 +6,16 @@ import { parseDateOnly, dateOnly } from '../utils/dates';
 import { AppError } from '../utils/errors';
 import { jsonSafe } from '../utils/serialize';
 import { newId } from '../utils/ids';
+import { assertTransactionCategory } from '../services/transactionCategoryLookup';
 
 const cycleService = new BudgetCycleService(); const uid = (req: Request) => req.authUser!.id;
-const ownedCategory = (categoryId: string, userId: string) => Category.findOne({ where: { id: categoryId, [Op.or]: [{ ownerUserId: userId }, { ownerUserId: null }] } });
 
 // Columns listTransactions is allowed to sort by (query-string controlled,
 // so this must stay a fixed whitelist rather than interpolating q.sort
 // directly into the ORDER BY clause).
 const SORTABLE_COLUMNS = new Set(['occurredAt', 'consumptionEvaluationUpdatedAt', 'createdAt']);
 
-export async function createTransaction(req: Request, res: Response) { const cycle = await cycleService.findOrCreateForDate(uid(req), parseDateOnly(req.body.occurredAt)); if (!(await ownedCategory(req.body.categoryId, uid(req)))) throw new AppError('INVALID_CATEGORY', 'Category not found', 400); const data = await Transaction.create({ ...req.body, id: newId(), userId: uid(req), budgetCycleId: cycle!.id, amount: String(req.body.amount), occurredAt: req.body.occurredAt, userEdited: true, ...(req.body.consumptionEvaluation ? { consumptionEvaluationUpdatedAt: new Date() } : {}) }); res.status(201).json({ success: true, data: jsonSafe(data) }); }
+export async function createTransaction(req: Request, res: Response) { await assertTransactionCategory(req.body.categoryId, uid(req)); const cycle = await cycleService.findOrCreateForDate(uid(req), parseDateOnly(req.body.occurredAt)); const data = await Transaction.create({ ...req.body, id: newId(), userId: uid(req), budgetCycleId: cycle!.id, amount: String(req.body.amount), occurredAt: req.body.occurredAt, userEdited: true, ...(req.body.consumptionEvaluation ? { consumptionEvaluationUpdatedAt: new Date() } : {}) }); res.status(201).json({ success: true, data: jsonSafe(data) }); }
 export async function listTransactions(req: Request, res: Response) {
   const q = req.query as Record<string, string | undefined>;
   const page = Math.max(1, Number(q.page ?? 1));
@@ -39,7 +39,8 @@ export async function getTransaction(req: Request, res: Response) { const data =
 export async function updateTransaction(req: Request, res: Response) {
   const item = await Transaction.findOne({ where: { id: String(req.params.id), userId: uid(req) } });
   if (!item) throw new AppError('NOT_FOUND', 'Transaction not found', 404);
-  if (req.body.categoryId && !(await ownedCategory(req.body.categoryId, uid(req)))) throw new AppError('INVALID_CATEGORY', 'Category not found', 400);
+  // Passing the transaction's current categoryId keeps a legacy row that sits on a 대분류 editable; only a *change* must land on a leaf.
+  if (req.body.categoryId) await assertTransactionCategory(req.body.categoryId, uid(req), item.get('categoryId'));
   // Only bump consumptionEvaluationUpdatedAt when the evaluation actually
   // changes value - the edit screen always resends the current evaluation
   // alongside unrelated field edits (amount, memo, ...), and those must not

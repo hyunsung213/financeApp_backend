@@ -4,6 +4,7 @@ import { DailyBudgetService } from './dailyBudgetService';
 import { FixedExpenseService } from './fixedExpenseService';
 import { BudgetCycle, Category, Transaction } from '../models';
 import { addDays, dateOnly, parseDateOnly } from '../utils/dates';
+import { buildCategoryReportRows } from './categoryReportRows';
 
 const asDate = (value: string | Date) => value instanceof Date ? value : parseDateOnly(String(value).slice(0, 10));
 const asDateKey = (value: string | Date) => value instanceof Date ? dateOnly(value) : String(value).slice(0, 10);
@@ -50,6 +51,6 @@ export class ReportService {
   }
 
   async monthly(userId: string) { const transactions = await Transaction.findAll({ where: { userId, status: 'CONFIRMED' }, include: [{ model: Category, as: 'category' }] }); const byMonth = new Map<string, { income: number; expense: number; saving: number; investment: number }>(); for (const transaction of transactions as any[]) { const key = asDateKey(transaction.occurredAt).slice(0, 7); const row = byMonth.get(key) ?? { income: 0, expense: 0, saving: 0, investment: 0 }; if (transaction.type === 'INCOME') row.income += Number(transaction.amount); else if (transaction.type === 'EXPENSE') row.expense += Number(transaction.amount); else if (transaction.category?.purposeType === 'INVESTMENT') row.investment += Number(transaction.amount); else row.saving += Number(transaction.amount); byMonth.set(key, row); } return [...byMonth.entries()].sort().map(([month, values]) => ({ month, ...values })); }
-  async categories(userId: string, start?: string, end?: string) { const where: any = { userId, status: 'CONFIRMED', type: 'EXPENSE' }; if (start || end) where.occurredAt = { ...(start ? { [Op.gte]: start } : {}), ...(end ? { [Op.lte]: end } : {}) }; const transactions = await Transaction.findAll({ where, include: [{ model: Category, as: 'category' }] }); const total = transactions.reduce((sum: number, transaction: any) => sum + Number(transaction.amount), 0); const map = new Map<string, { amount: number; transactionCount: number }>(); for (const transaction of transactions as any[]) { const name = transaction.category?.name ?? '기타'; const row = map.get(name) ?? { amount: 0, transactionCount: 0 }; row.amount += Number(transaction.amount); row.transactionCount++; map.set(name, row); } return [...map.entries()].map(([category, values]) => ({ category, ...values, percentage: total ? values.amount / total * 100 : 0 })); }
+  async categories(userId: string, start?: string, end?: string) { const where: any = { userId, status: 'CONFIRMED', type: 'EXPENSE' }; if (start || end) where.occurredAt = { ...(start ? { [Op.gte]: start } : {}), ...(end ? { [Op.lte]: end } : {}) }; const transactions = await Transaction.findAll({ where, include: [{ model: Category, as: 'category' }] }); return buildCategoryReportRows(transactions as any[]); }
   async pace(userId: string) { const context = await this.context(userId); return { current: { cycleStart: context.cycle.startDate, cycleEnd: context.cycle.endDate, ...context.result }, previous: null }; }
 }

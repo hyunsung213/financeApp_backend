@@ -67,6 +67,7 @@ Authorization: Bearer <SUPABASE_ACCESS_TOKEN>
 |---:|---|---|
 | 400 | `VALIDATION_ERROR` | 요청 body 또는 값 검증 실패 |
 | 400 | `INVALID_CATEGORY` | 사용할 수 없는 카테고리 |
+| 400 | `CATEGORY_HAS_CHILDREN` | 하위 카테고리가 있는 대분류를 거래의 `categoryId`로 지정함 (거래 생성/수정) |
 | 400 | `UNSUPPORTED_NOTIFICATION_PACKAGE` | 허용되지 않은 Android 알림 패키지 |
 | 400 | `EMPTY_NOTIFICATION` | 제목과 본문이 모두 비어 있음 |
 | 400 | `INVALID_ALLOCATION_TOTAL` | 활성 예산 배분 합계가 100%가 아님 |
@@ -281,6 +282,8 @@ Request body:
 ## 9. 거래
 
 ### `POST /api/transactions`
+
+`categoryId`는 하위(active) 카테고리가 없는 카테고리(소분류)여야 합니다. 식비처럼 하위 카테고리가 있는 대분류를 보내면 `400 CATEGORY_HAS_CHILDREN`("하위 카테고리가 있는 대분류는 거래 카테고리로 직접 선택할 수 없습니다.")을 반환합니다. `PATCH /api/transactions/:id`에도 같은 규칙이 적용되며, 이미 대분류에 저장된 기존 거래는 그대로 조회할 수 있고 현재 `categoryId`를 변경 없이 다시 보내는 수정은 거절하지 않습니다.
 
 Request body:
 
@@ -501,6 +504,8 @@ GET /api/transactions?type=EXPENSE&evaluation=REGRETTABLE,BAD&sort=consumptionEv
 
 선택 query: `startDate`, `endDate`
 
+카테고리 id 기준으로 묶습니다. `parentCategoryId`는 대분류(루트)면 `null`이며, 대분류에 직접 저장된 기존 거래는 대분류 id 그대로 한 행으로 내려갑니다.
+
 응답:
 
 ```json
@@ -508,7 +513,9 @@ GET /api/transactions?type=EXPENSE&evaluation=REGRETTABLE,BAD&sort=consumptionEv
   "success": true,
   "data": [
     {
-      "category": "식비",
+      "categoryId": "core.expense.food.meal",
+      "category": "식사",
+      "parentCategoryId": "core.expense.food",
       "amount": 30000,
       "transactionCount": 2,
       "percentage": 64.6551724138
