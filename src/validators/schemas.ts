@@ -1,13 +1,21 @@
 import { z } from 'zod';
+import { BUDGET_CATEGORY_IDS } from '../constants/budgetPlan';
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
 const money = z.coerce.number().int().positive();
 const consumptionEvaluation = z.enum(['GOOD', 'NORMAL', 'REGRETTABLE', 'BAD']);
 
 export const financeSettingSchema = z.object({ salaryAmount: z.coerce.number().int().nonnegative(), salaryDay: z.coerce.number().int().min(1).max(31), reportingStartDay: z.coerce.number().int().min(1).max(31).optional() });
+const budgetPlanItemSchema = z.object({ categoryId: z.enum(BUDGET_CATEGORY_IDS), percentage: z.coerce.number().min(0).max(100) });
+export const budgetPlanSchema = z.object({ allocations: z.array(budgetPlanItemSchema).length(BUDGET_CATEGORY_IDS.length) }).superRefine((value, ctx) => {
+  const ids = value.allocations.map((allocation) => allocation.categoryId);
+  if (new Set(ids).size !== BUDGET_CATEGORY_IDS.length) ctx.addIssue({ code: 'custom', message: 'Each budget category must be included exactly once' });
+  if (Math.round(value.allocations.reduce((sum, allocation) => sum + allocation.percentage, 0) * 100) !== 10000) ctx.addIssue({ code: 'custom', message: 'Budget allocation percentages must total 100' });
+});
 export const allocationSchema = z.object({ name: z.string().min(1).max(50), allocationType: z.enum(['SAVING', 'INVESTMENT', 'FIXED_LIVING', 'FLEXIBLE', 'TRANSPORT', 'COMMUNICATION', 'SUBSCRIPTION', 'HOUSING', 'FOOD', 'OTHER']), percentage: z.coerce.number().min(0).max(100), spendability: z.enum(['LOCKED', 'RESERVED', 'FLEXIBLE']), active: z.boolean().optional() });
 export const transactionSchema = z.object({ categoryId: z.string().min(1), type: z.enum(['EXPENSE', 'INCOME', 'SAVING']), amount: money, occurredAt: date, merchantOrTitle: z.string().min(1).max(120), memo: z.string().max(500).optional(), consumptionEvaluation: consumptionEvaluation.nullable().optional(), source: z.enum(['MANUAL', 'AUTO', 'RECEIPT', 'FIXED']).optional(), status: z.enum(['CONFIRMED', 'PENDING', 'EXCLUDED']).optional() });
 export const transactionPatchSchema = transactionSchema.partial();
+export const refundSchema = z.object({ amount: money });
 export const fixedExpenseSchema = z.object({ categoryId: z.string(), name: z.string().min(1).max(120), expectedAmount: money, billingDay: z.coerce.number().int().min(1).max(31), recurrenceType: z.enum(['MONTHLY', 'YEARLY']), startDate: date, endDate: date.optional() });
 export const categorySchema = z.object({ name: z.string().trim().min(1).max(50), type: z.enum(['EXPENSE', 'INCOME', 'SAVING']), purposeType: z.enum(['GENERAL', 'SAVING', 'INVESTMENT']).optional(), parentCategoryId: z.string().trim().min(1).nullable().optional(), sortOrder: z.coerce.number().int().min(0).optional(), isActive: z.boolean().optional() });
 export const categoryPatchSchema = z.object({ name: z.string().trim().min(1).max(50).optional(), parentCategoryId: z.string().trim().min(1).nullable().optional(), sortOrder: z.coerce.number().int().min(0).optional(), isActive: z.boolean().optional() }).refine((value) => Object.keys(value).length > 0, 'At least one category field is required');

@@ -34,7 +34,7 @@ tests/dailyBudgetService.test.ts
 
 개발 중 로그인 없이 API를 호출하려면 `.env`에서 `DEV_AUTH_BYPASS=true`로 설정합니다. 이 옵션은 `NODE_ENV=production`에서는 무시되며, 개발용 seed 사용자(`seed@example.local`)로 요청을 처리합니다. 운영 배포 전 반드시 `DEV_AUTH_BYPASS=false`로 설정하세요.
 
-현재 seed 시나리오의 기준값은 월급 2,500,000원, 유연 지출 예산 1,000,000원, 최근 7일 확정 유연 지출 138,600원, 예정 고정비 50,000원입니다. 최근 7일은 식비·교통·생활·건강 항목으로 구성되며, 하루 지출 합계는 50,000원 이하입니다. 따라서 `GET /api/home`에서 현재 날짜 기준 남은 유연 예산은 811,400원으로 계산되어야 합니다. seed 거래는 현실적인 지출 내역만 포함하며 수입·저축 이체 거래는 만들지 않습니다.
+현재 seed 시나리오는 월급 2,500,000원을 지출 대분류 10개·저축·투자에 총 100% 배분합니다. 저축 20%(500,000원), 투자 10%(250,000원), 고정지출 25%(625,000원)이며, 나머지 지출 대분류의 합계는 45%(1,125,000원)입니다. 최근 7일 거래에는 16,400원의 고정지출과 122,200원의 일반 지출이 포함되므로, 현재 사용가능 잔액은 1,002,800원입니다.
 
 ## 주요 API
 
@@ -43,12 +43,15 @@ tests/dailyBudgetService.test.ts
 | GET | `/health` | 헬스 체크 |
 | GET | `/api/home` | 오늘 권장 소비액, 남은 예산, pace, 추가 저축 예상 |
 | GET/PUT | `/api/finance/setting` | 월급/월급일 설정 |
-| GET/POST/PATCH | `/api/finance/allocations` | 예산 배분 |
+| GET/PUT | `/api/finance/budget-plan` | 지출 대분류 10개·저축·투자의 전체 월급 비율 설정 |
+| GET | `/api/finance/allocations` | 이전 예산 배분 조회(쓰기 API는 폐기) |
 | POST/GET/PATCH/DELETE | `/api/transactions` | 거래 CRUD 및 필터 |
+| PATCH | `/api/transactions/:id/refund` | 환불·정산·K-Pass 누적 등록 |
 | GET | `/api/reports/summary` | 수입/지출/저축/투자 요약 |
 | GET | `/api/reports/daily` | 일별 수입·지출/권장액/차이 및 무지출 일수 |
 | GET | `/api/reports/monthly` | 월별 추이 |
 | GET | `/api/reports/categories` | 카테고리 통계 |
+| GET | `/api/reports/budget` | 대분류별 계획·사용·잔액·사용률 |
 | GET | `/api/reports/pace` | 현재 소비속도 |
 | GET/POST | `/api/fixed-expenses` | 고정지출 및 occurrence |
 | POST | `/api/notifications` | Android 금융 알림 수신 및 카드 승인 자동 거래 등록 |
@@ -67,20 +70,18 @@ tests/dailyBudgetService.test.ts
 ## Daily Budget 계산
 
 ```text
-flexibleBudget = salarySnapshot × FLEXIBLE percentage
-remainingFlexible = flexibleBudget
-  - confirmed flexible expense
-  - non-flexible budget overage
-  - unpaid scheduled fixed expense
-todayRecommended = max(0, floor(remainingFlexible / 오늘 포함 남은 일수))
-remainingToday = todayRecommended - 오늘의 확정 지출
+categoryBudget = floor(salarySnapshot × categoryPercentage / 100)
+usableBudget = 고정지출·저축·투자를 제외한 지출 대분류 예산의 합계
+remainingUsable = usableBudget - confirmed (amount - refundedAmount) 지출
+todayRecommended = max(0, floor(remainingUsable / 오늘 포함 다음 월급일까지 남은 일수))
+remainingToday = todayRecommended - 오늘의 확정 사용가능 지출
 ```
 
 `remainingToday`는 오늘 권장액을 초과하면 음수가 될 수 있습니다. `todayRecommended` 자체는 음수가 되지 않습니다.
 
-`PENDING`와 `EXCLUDED`는 공식 통계에서 제외합니다. 고정지출 occurrence가 실제 Transaction에 매칭되면 occurrence가 `PAID`가 되어 예정금과 실제 거래가 이중 차감되지 않습니다.
+월급 예산은 지출 대분류 10개·저축·투자의 12개 항목을 사용하며, 전체 비율의 합계는 100%여야 합니다. `PENDING`, `EXCLUDED`, 다음 날짜의 확정 거래는 사용가능 잔액에서 제외됩니다. 고정지출 거래와 예정 occurrence는 사용가능 예산을 이중 차감하지 않습니다. 실제 급여 수입만 주기를 전환하며, 추가 수입은 현재 주기의 스냅샷 비율대로 각 예산을 늘립니다.
 
-이 브랜치는 `budget.calculationMode: "PERCENTAGE_ALLOCATION"`을 반환합니다. 활성 배분의 퍼센트 합계는 100%여야 하며, `FLEXIBLE` 배분액만 오늘 권장 사용액의 원금으로 사용합니다.
+Home 응답은 `budget.calculationMode: "CATEGORY_PERCENTAGE_ALLOCATION"`를 반환합니다. 새 프론트엔드는 `GET/PUT /api/finance/budget-plan`으로 전체 비율을 관리해야 합니다.
 
 ## Sequelize 모델
 

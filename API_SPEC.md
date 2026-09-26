@@ -118,9 +118,15 @@ Authorization: Bearer <SUPABASE_ACCESS_TOKEN>
       "remainingToday": 21500
     },
     "budget": {
-      "calculationMode": "PERCENTAGE_ALLOCATION",
-      "remainingFlexibleAmount": 536000,
-      "reservedFixedAmount": 80000
+      "calculationMode": "CATEGORY_PERCENTAGE_ALLOCATION",
+      "salaryAmount": 3000000,
+      "savingBudgetAmount": 600000,
+      "investmentBudgetAmount": 300000,
+      "fixedExpenseBudgetAmount": 750000,
+      "usableBudgetAmount": 1350000,
+      "variableExpenseAmount": 195000,
+      "fixedExpenseAmount": 480000,
+      "remainingUsableAmount": 1005000
     },
     "pace": {
       "status": "UNDER",
@@ -137,7 +143,9 @@ Authorization: Bearer <SUPABASE_ACCESS_TOKEN>
 
 `today.remainingToday`는 `recommendedAmount - spentAmount`로 계산되며, 오늘 권장액을 초과해 사용한 경우 음수로 반환될 수 있습니다. 프론트에서는 음수일 때 초과 지출 금액으로 표시하면 됩니다.
 
-`budget.calculationMode`가 `PERCENTAGE_ALLOCATION`인 이 브랜치에서는 활성 allocation의 퍼센트 합계가 100%여야 하며, `FLEXIBLE` allocation의 금액에서 확정 변동지출과 예정 고정지출을 뺀 뒤 오늘을 포함한 남은 일수로 나눕니다.
+일일 예산과 월급일 계산의 날짜 기준은 `Asia/Seoul`입니다.
+
+`budget.calculationMode`는 `CATEGORY_PERCENTAGE_ALLOCATION`입니다. 월급 전체를 지출 대분류 10개·저축·투자의 12개 비율로 나눕니다. 오늘 권장액은 고정지출·저축·투자를 제외한 지출 대분류의 남은 예산 합계를 오늘을 포함한 예상 다음 급여일까지의 일수로 나눈 값입니다. 고정지출 예정액은 별도로 차감하지 않습니다.
 
 `pace.status` 값:
 
@@ -189,7 +197,62 @@ Request body:
 - `salaryDay`: 1~31
 - `reportingStartDay`: 1~31
 
-## 7. 예산 배분
+## 7. 월급 예산 계획
+
+프론트엔드는 아래 전용 API로 지출 대분류 10개·저축·투자의 월급 배분 전체를 한 번에 저장해야 합니다. 저장한 비율은 다음 실제 급여 등록으로 시작되는 주기부터 적용됩니다.
+
+### `GET /api/finance/budget-plan`
+
+현재 월급과 12개 배분 항목을 조회합니다. 아직 설정하지 않은 경우 `isConfigured: false`와 기본 예시 비율을 반환합니다.
+
+```json
+{
+  "success": true,
+  "data": {
+    "isConfigured": true,
+    "salaryAmount": 3000000,
+    "allocations": [
+      { "categoryId": "core.expense.food", "name": "식비", "percentage": 15 },
+      { "categoryId": "core.expense.fixed", "name": "고정지출", "percentage": 25 },
+      { "categoryId": "core.saving", "name": "저축", "percentage": 20 },
+      { "categoryId": "core.investment", "name": "투자", "percentage": 10 }
+    ]
+  }
+}
+```
+
+`isConfigured: false`이면 먼저 `PUT /api/finance/budget-plan`을 호출해야 합니다.
+
+### `PUT /api/finance/budget-plan`
+
+```json
+{
+  "allocations": [
+    { "categoryId": "core.expense.food", "percentage": 15 },
+    { "categoryId": "core.expense.transport", "percentage": 8 },
+    { "categoryId": "core.expense.living", "percentage": 8 },
+    { "categoryId": "core.expense.fixed", "percentage": 25 },
+    { "categoryId": "core.expense.shopping", "percentage": 4 },
+    { "categoryId": "core.expense.leisure-culture", "percentage": 4 },
+    { "categoryId": "core.expense.health", "percentage": 2 },
+    { "categoryId": "core.expense.education", "percentage": 1 },
+    { "categoryId": "core.expense.relationship", "percentage": 2 },
+    { "categoryId": "core.expense.other", "percentage": 1 },
+    { "categoryId": "core.saving", "percentage": 20 },
+    { "categoryId": "core.investment", "percentage": 10 }
+  ]
+}
+```
+
+검증 및 반영 규칙:
+
+- 12개 항목을 각각 한 번씩 포함해야 하며, 전체 합계는 정확히 100이어야 합니다.
+- 월급 설정(`PUT /api/finance/setting`)을 먼저 완료해야 합니다.
+- 유효한 현재 주기는 변경하지 않고 다음 실제 급여 입력부터 반영합니다. 기존 3분류 레거시 주기만 1회 마이그레이션합니다.
+
+## 8. 기존 예산 배분 API
+
+`/api/finance/allocations`는 이전 allocation 데이터 조회를 위해 유지합니다. `POST`와 `PATCH`는 `410 LEGACY_ALLOCATION_API_DEPRECATED`를 반환하므로, 새 화면에서는 `budget-plan` API만 사용하세요.
 
 ### `GET /api/finance/allocations`
 
@@ -259,14 +322,14 @@ Request body는 `POST` body의 일부 필드만 전달할 수 있습니다.
 ```text
 식비       → 식사 / 배달 / 카페 / 간식 / 술 / 편의점
 교통       → 대중교통 / 택시 / 기차·버스 / 주유 / 주차 / 차량관리
-생활       → 생필품 / 마트·장보기 / 통신비 / 공과금 / 주거비 / 구독
+생활       → 생필품 / 마트·장보기
+고정지출   → 통신비 / 공과금 / 주거비 / 구독 / 보험 / 대출상환 / 이자 / 세금
 쇼핑       → 의류 / 신발·잡화 / 화장품·미용 / 전자기기 / 가구·인테리어 / 기타쇼핑
 여가·문화  → 영화·공연 / 게임 / 취미 / 여행 / 스포츠 / 콘텐츠
 건강       → 병원 / 약국 / 운동 / 건강관리
 교육·자기계발 → 도서 / 강의 / 학원 / 자격증 / 학비
 모임·관계  → 친구·모임 / 데이트 / 선물 / 경조사 / 회비
-금융       → 수수료 / 이자 / 세금 / 보험 / 대출상환
-기타       → 기타지출 / 미분류
+기타       → 기타지출 / 미분류 / 수수료
 ```
 
 프론트엔드는 이름 대신 `id`를 저장하고 거래·고정지출 등록 시 `categoryId`로 전달해야 합니다. 대분류와 중분류를 구분해 표시하려면 `parentCategoryId === null`인 항목을 대분류로 사용합니다.
@@ -392,6 +455,8 @@ Request body:
 
 `amount`는 0보다 큰 정수입니다.
 
+`core.income.salary` 카테고리의 확정 수입은 실제 급여로 처리되어 기존 활성 주기를 닫고 새 주기를 시작합니다. 다른 확정 수입은 추가수입으로 처리되어 현재 주기의 12개 예산을 해당 주기에 저장된 비율대로 증액합니다.
+
 ### `GET /api/transactions`
 
 Query parameters:
@@ -426,6 +491,8 @@ GET /api/transactions?startDate=2026-08-01&endDate=2026-08-31&type=EXPENSE&page=
         "categoryId": "category-id",
         "type": "EXPENSE",
         "amount": "12000",
+        "refundedAmount": "0",
+        "effectiveAmount": 12000,
         "occurredAt": "2026-08-16",
         "merchantOrTitle": "점심",
         "memo": "회사 근처 식당",
@@ -476,9 +543,21 @@ GET /api/transactions?startDate=2026-08-01&endDate=2026-08-31&type=EXPENSE&page=
 }
 ```
 
+### `PATCH /api/transactions/:id/refund`
+
+환불·정산·K-Pass로 실제 돌려받은 금액을 원 지출에 누적합니다. 별도 수입 거래를 만들지 않으며, 모든 예산·리포트 계산은 `amount - refundedAmount`를 실제 지출로 사용합니다.
+
+```json
+{
+  "amount": 20000
+}
+```
+
+누적 환불액은 원 지출 금액을 초과할 수 없습니다.
+
 ## 10. 리포트
 
-모든 공식 통계는 `status=CONFIRMED` 거래를 기준으로 계산합니다.
+모든 공식 통계는 `status=CONFIRMED` 거래를 기준으로 계산하며, 지출은 `amount - refundedAmount`를 사용합니다.
 
 ### `GET /api/reports/summary`
 
@@ -579,6 +658,12 @@ GET /api/transactions?startDate=2026-08-01&endDate=2026-08-31&type=EXPENSE&page=
   ]
 }
 ```
+
+`categories`는 중분류 거래를 상위 지출 대분류로 합산합니다.
+
+### `GET /api/reports/budget`
+
+현재 급여 주기의 지출 대분류별 계획·사용·남은 금액·사용률을 반환합니다. 고정지출·저축·투자도 별도 항목으로 반환합니다.
 
 ### `GET /api/reports/pace`
 
@@ -761,15 +846,6 @@ Gemini 호출 없이 원문만 전체 적재하려면 아래처럼 `generatePres
   "allPages": true,
   "display": 100,
   "generatePresentation": false
-}
-```
-
-Request body:
-
-```json
-{
-  "display": 100,
-  "allPages": true
 }
 ```
 

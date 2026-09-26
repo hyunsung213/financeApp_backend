@@ -19,6 +19,7 @@ import { ReportService } from './services/reportService';
 import { addDays, dateOnly, daysInclusive, parseDateOnly } from './utils/dates';
 import { newId } from './utils/ids';
 import { CATEGORY_CATALOG, CATEGORY_IDS } from './constants/categoryCatalog';
+import { DEFAULT_BUDGET_PLAN, allocationTypeForCategory, budgetCategoryName, spendabilityForCategory } from './constants/budgetPlan';
 
 const seedUserId = '00000000-0000-4000-8000-000000000001';
 const legacySeedCategoryIds = ['식비', '카페', '교통', '저축', '투자', '통신', '구독', '급여'].map((name) => `seed-${name}`);
@@ -63,12 +64,16 @@ async function main() {
   categories['카페'] = CATEGORY_IDS.EXPENSE_FOOD_CAFE;
   categories['구독'] = CATEGORY_IDS.EXPENSE_LIVING_SUBSCRIPTION;
 
-  for (const [name, allocationType, percentage, spendability] of [
-    ['저축', 'SAVING', 50, 'LOCKED'],
-    ['투자', 'INVESTMENT', 10, 'LOCKED'],
-    ['지출', 'FLEXIBLE', 40, 'FLEXIBLE'],
-  ] as const) {
-    await BudgetAllocation.create({ id: newId(), userId: user.id, name, allocationType, percentage, spendability });
+  for (const allocation of DEFAULT_BUDGET_PLAN) {
+    await BudgetAllocation.create({
+      id: newId(),
+      userId: user.id,
+      categoryId: allocation.categoryId,
+      name: budgetCategoryName(allocation.categoryId),
+      allocationType: allocationTypeForCategory(allocation.categoryId),
+      percentage: allocation.percentage,
+      spendability: spendabilityForCategory(allocation.categoryId),
+    });
   }
 
   const today = new Date();
@@ -153,14 +158,16 @@ async function main() {
   }
 
   const result = (await new ReportService().context(user.id, today)).result;
-  const expectedRemaining = 811400;
+  const expectedRemaining = 1002800;
   const expectedRecommended = Math.floor(expectedRemaining / daysInclusive(today, cycleEnd));
   const checks = {
-    flexibleBudget: result.flexibleBudget === 1000000,
-    flexibleSpent: result.flexibleSpent === 138600,
-    reservedScheduledAmount: result.reservedScheduledAmount === 50000,
-    nonFlexibleOverage: result.nonFlexibleOverage === 0,
-    remainingFlexibleAmount: result.remainingFlexibleAmount === expectedRemaining,
+    savingBudgetAmount: result.savingBudgetAmount === 500000,
+    investmentBudgetAmount: result.investmentBudgetAmount === 250000,
+    fixedExpenseBudgetAmount: result.fixedExpenseBudgetAmount === 625000,
+    usableBudgetAmount: result.usableBudgetAmount === 1125000,
+    variableExpenseAmount: result.variableExpenseAmount === 122200,
+    fixedExpenseAmount: result.fixedExpenseAmount === 16400,
+    remainingUsableAmount: result.remainingUsableAmount === expectedRemaining,
     todayRecommendedAmount: result.todayRecommendedAmount === expectedRecommended,
   };
   if (Object.values(checks).some((passed) => !passed)) {
