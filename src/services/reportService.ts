@@ -14,10 +14,17 @@ export class ReportService {
   private daily = new DailyBudgetService();
   private cycles = new BudgetCycleService();
 
-  async context(userId: string, today = new Date()) {
-    const cycle = await this.cycles.ensureCurrentCycle(userId, today);
+  async context(userId: string, now = new Date()) {
+    const cycle = await this.cycles.ensureCurrentCycle(userId, now);
+    const today = parseDateOnly(dateOnly(now));
+    const projectedEnd = asDate(cycle.endDate);
+    // Past the expected payday with no salary entered yet, the ACTIVE cycle
+    // keeps running through today: its spending still counts, and the daily
+    // allowance divides the rest over 1 day instead of a new month.
+    const salaryOverdue = cycle.status === 'ACTIVE' && today > projectedEnd;
+    const cycleEnd = salaryOverdue ? today : projectedEnd;
     const transactions = await Transaction.findAll({
-      where: { userId, occurredAt: { [Op.gte]: dateOnly(asDate(cycle.startDate)), [Op.lte]: dateOnly(asDate(cycle.endDate)) } },
+      where: { userId, occurredAt: { [Op.gte]: dateOnly(asDate(cycle.startDate)), [Op.lte]: dateOnly(cycleEnd) } },
       include: [{ model: Category, as: 'category' }],
     });
     const categoryMap = await this.categoryMap(userId);
@@ -33,12 +40,16 @@ export class ReportService {
     const result = this.daily.calculate({
       today,
       cycleStart: asDate(cycle.startDate),
-      cycleEnd: asDate(cycle.endDate),
+      cycleEnd,
       salaryAmount: Number(cycle.salarySnapshot),
       allocations,
       transactions: budgetTransactions,
     });
-    return { cycle, transactions, result };
+    // The expected payday and the allowance divisor share one basis: the
+    // days from today through the projected end are exactly D-Day.
+    const nextSalaryDate = addDays(projectedEnd, 1);
+    const daysUntilSalary = salaryOverdue ? 0 : result.remainingDays;
+    return { cycle, transactions, result, nextSalaryDate, daysUntilSalary };
   }
 
   async summary(userId: string, start?: string, end?: string) {

@@ -1,8 +1,7 @@
 import type { Request, Response } from 'express';
 import { Op } from 'sequelize';
 import { sequelize } from '../config/database';
-import { BudgetCycleService } from '../services/budgetCycleService';
-import { CATEGORY_IDS } from '../constants/categoryCatalog';
+import { BudgetCycleService, isSalaryCategory } from '../services/budgetCycleService';
 import { Category, Transaction } from '../models';
 import { parseDateOnly, dateOnly } from '../utils/dates';
 import { AppError } from '../utils/errors';
@@ -13,7 +12,6 @@ import { assertTransactionCategory } from '../services/transactionCategoryLookup
 const cycleService = new BudgetCycleService();
 const uid = (req: Request) => req.authUser!.id;
 const ownedCategory = (categoryId: string, userId: string, transaction?: any) => Category.findOne({ where: { id: categoryId, isActive: true, [Op.or]: [{ ownerUserId: userId }, { ownerUserId: null }] }, transaction });
-const isSalaryCategory = (category: any) => category?.id === CATEGORY_IDS.INCOME_SALARY || category?.sourceCategoryId === CATEGORY_IDS.INCOME_SALARY;
 const confirmedIncome = (data: any, category: any) => data.type === 'INCOME' && data.status === 'CONFIRMED';
 const additionalIncome = (data: any, category: any) => confirmedIncome(data, category) && !isSalaryCategory(category);
 // Columns listTransactions is allowed to sort by (query-string controlled,
@@ -88,7 +86,7 @@ export async function updateTransaction(req: Request, res: Response) {
     const occurredAt = parseDateOnly(String(next.occurredAt));
     const salaryIncome = confirmedIncome(next, category) && isSalaryCategory(category);
     const cycle = salaryIncome
-      ? await cycleService.startCycleFromSalary(uid(req), occurredAt, next.amount, transaction)
+      ? await cycleService.startCycleFromSalary(uid(req), occurredAt, next.amount, transaction, item.id)
       : await cycleService.findOrCreateForDate(uid(req), occurredAt, transaction);
     const updated = await item.update({ ...req.body, budgetCycleId: cycle!.id, ...(req.body.amount !== undefined ? { amount: String(req.body.amount) } : {}), ...(req.body.occurredAt ? { occurredAt: dateOnly(occurredAt) } : {}), ...(evaluationChanged ? { consumptionEvaluationUpdatedAt: req.body.consumptionEvaluation ? new Date() : null } : {}), userEdited: true }, { transaction });
     if (additionalIncome(next, category)) await cycleService.addAdditionalIncome(cycle!.id, next.amount, transaction);

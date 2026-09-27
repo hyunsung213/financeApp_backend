@@ -53,3 +53,10 @@ test('pending, excluded, and future transactions do not reduce the current daily
   expect(result.variableExpenseAmount).toBe(0);
   expect(result.remainingUsableAmount).toBe(1350000);
 });
+
+test('divides the remaining budget over today through the day before the next payday (D-Day)', () => {
+  const september = { ...base, cycleStart: new Date('2026-09-01T00:00:00Z'), cycleEnd: new Date('2026-09-30T00:00:00Z') };
+  const result = service.calculate({ ...september, today: new Date('2026-09-26T00:00:00Z') });
+  expect(result.remainingDays).toBe(5);
+  expect(result.todayRecommendedAmount).toBe(Math.floor(1350000 / 5));
+});

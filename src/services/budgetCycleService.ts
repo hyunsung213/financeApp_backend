@@ -1,6 +1,7 @@
 import { Op, type Transaction as SequelizeTransaction } from 'sequelize';
-import { BudgetAllocation, BudgetCycle, BudgetCycleAllocation, UserFinanceSetting } from '../models';
+import { BudgetAllocation, BudgetCycle, BudgetCycleAllocation, Category, Transaction, UserFinanceSetting } from '../models';
 import { BUDGET_CATEGORY_IDS, type BudgetCategoryId } from '../constants/budgetPlan';
+import { CATEGORY_IDS } from '../constants/categoryCatalog';
 import { addDays, currentCycleRange, dateOnly, nextSalaryDate } from '../utils/dates';
 import { AppError } from '../utils/errors';
 import { newId } from '../utils/ids';
@@ -23,14 +24,15 @@ const completePlan = (items: Array<{ categoryId?: string; percentage: number }>)
     && Math.round(items.reduce((sum, item) => sum + Number(item.percentage), 0) * 100) === 10000;
 };
 
+export const isSalaryCategory = (category: any) => category?.id === CATEGORY_IDS.INCOME_SALARY || category?.sourceCategoryId === CATEGORY_IDS.INCOME_SALARY;
+
 export class BudgetCycleService {
+  // An ACTIVE cycle's endDate is its projected end (the day before the next
+  // expected payday); only a real salary closes it and fixes the actual end.
+  // Reads never move it - report ranges pass future dates in as `today`.
   async ensureCurrentCycle(userId: string, today = new Date(), transaction?: SequelizeTransaction) {
     const active = await this.findActiveCycle(userId, transaction);
     if (active) {
-      const setting = await this.requireSetting(userId, transaction);
-      if (String(active.endDate).slice(0, 10) < dateOnly(today)) {
-        await active.update({ endDate: dateOnly(addDays(nextSalaryDate(today, Number(setting.salaryDay)), -1)) }, { transaction });
-      }
       this.assertCompleteSnapshot(active.allocations ?? []);
       return active;
     }
@@ -57,11 +59,16 @@ export class BudgetCycleService {
     return historical;
   }
 
-  async startCycleFromSalary(userId: string, salaryDate: Date, salaryAmount: number, transaction?: SequelizeTransaction) {
+  // `salaryTransactionId` is the salary row being edited, if any, so it is not
+  // counted as additional income while its old values are still stored.
+  async startCycleFromSalary(userId: string, salaryDate: Date, salaryAmount: number, transaction?: SequelizeTransaction, salaryTransactionId?: string) {
     const active = await this.findActiveCycle(userId, transaction);
     const startDate = dateOnly(salaryDate);
     if (active && String(active.startDate).slice(0, 10) === startDate) {
-      await this.rebalanceCycle(active, salaryAmount, transaction);
+      // Same start date means re-entering this cycle's salary (startDate is
+      // unique per user); additional income already added to it must stay.
+      const additional = await this.additionalIncomeAmount(active.id, salaryTransactionId, transaction);
+      await this.rebalanceCycle(active, salaryAmount + additional, transaction);
       return BudgetCycle.findByPk(active.id, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction });
     }
     if (active) {
@@ -87,9 +94,14 @@ export class BudgetCycleService {
     return BudgetCycle.findByPk(cycle.id, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction });
   }
 
-  async upgradeLegacyActiveCycle(userId: string, transaction?: SequelizeTransaction) {
+  // Re-snapshots the ACTIVE cycle from the saved plan so a plan change applies
+  // immediately. The distributable total stays `salarySnapshot` (salary plus
+  // any additional income already added), so only the percentages and the
+  // per-category limits change - dates, salary and transactions are untouched.
+  // No ACTIVE cycle means nothing to update; the next salary starts one.
+  async applyPlanToActiveCycle(userId: string, transaction?: SequelizeTransaction) {
     const cycle = await this.findActiveCycle(userId, transaction);
-    if (!cycle || completePlan(cycle.allocations ?? [])) return cycle;
+    if (!cycle) return null;
     const allocations = await BudgetAllocation.findAll({ where: { userId, active: true }, transaction });
     if (!completePlan(allocations)) return cycle;
     const snapshot = this.createSnapshot(Number(cycle.salarySnapshot), allocations);
@@ -103,6 +115,23 @@ export class BudgetCycleService {
     await BudgetCycleAllocation.destroy({ where: { budgetCycleId: cycle.id }, transaction });
     await BudgetCycleAllocation.bulkCreate(snapshot.map((item) => ({ ...item, budgetCycleId: cycle.id })), { transaction });
     return BudgetCycle.findByPk(cycle.id, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction });
+  }
+
+  // A salaryDay change moves the ACTIVE cycle's projected end to the day
+  // before the next payday under the new setting. The cycle stays ACTIVE.
+  async rescheduleActiveCycle(userId: string, salaryDay: number, today = new Date(), transaction?: SequelizeTransaction) {
+    const active = await this.findActiveCycle(userId, transaction);
+    if (!active) return null;
+    return active.update({ endDate: dateOnly(addDays(nextSalaryDate(today, salaryDay), -1)) }, { transaction });
+  }
+
+  private async additionalIncomeAmount(budgetCycleId: string, excludeTransactionId?: string, transaction?: SequelizeTransaction) {
+    const incomes = await Transaction.findAll({
+      where: { budgetCycleId, type: 'INCOME', status: 'CONFIRMED', ...(excludeTransactionId ? { id: { [Op.ne]: excludeTransactionId } } : {}) },
+      include: [{ model: Category, as: 'category' }],
+      transaction,
+    });
+    return incomes.filter((income: any) => !isSalaryCategory(income.category)).reduce((sum: number, income: any) => sum + Number(income.amount), 0);
   }
 
   private async createCycle(userId: string, start: Date, salaryAmount: number, transaction?: SequelizeTransaction) {
