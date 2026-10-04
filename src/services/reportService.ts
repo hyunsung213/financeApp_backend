@@ -18,9 +18,11 @@ export class ReportService {
     const cycle = await this.cycles.ensureCurrentCycle(userId, now);
     const today = parseDateOnly(dateOnly(now));
     const projectedEnd = asDate(cycle.endDate);
-    // Past the expected payday with no salary entered yet, the ACTIVE cycle
-    // keeps running through today: its spending still counts, and the daily
-    // allowance divides the rest over 1 day instead of a new month.
+    // ensureCurrentCycle rolls a cycle over once its payday arrives; it only
+    // stays ACTIVE past the projected end when it cannot be renewed (no
+    // salary amount or no complete plan). Then it keeps running through
+    // today: its spending still counts, and the daily allowance divides the
+    // rest over 1 day instead of a new month.
     const salaryOverdue = cycle.status === 'ACTIVE' && today > projectedEnd;
     const cycleEnd = salaryOverdue ? today : projectedEnd;
     const transactions = await Transaction.findAll({

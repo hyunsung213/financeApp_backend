@@ -2,7 +2,8 @@ import { Op, type Transaction as SequelizeTransaction } from 'sequelize';
 import { BudgetAllocation, BudgetCycle, BudgetCycleAllocation, Category, Transaction, UserFinanceSetting } from '../models';
 import { BUDGET_CATEGORY_IDS, type BudgetCategoryId } from '../constants/budgetPlan';
 import { CATEGORY_IDS } from '../constants/categoryCatalog';
-import { addDays, currentCycleRange, dateOnly, nextSalaryDate } from '../utils/dates';
+import { sequelize } from '../config/database';
+import { addDays, currentCycleRange, dateOnly, nextSalaryDate, parseDateOnly } from '../utils/dates';
 import { AppError } from '../utils/errors';
 import { newId } from '../utils/ids';
 
@@ -27,27 +28,29 @@ const completePlan = (items: Array<{ categoryId?: string; percentage: number }>)
 export const isSalaryCategory = (category: any) => category?.id === CATEGORY_IDS.INCOME_SALARY || category?.sourceCategoryId === CATEGORY_IDS.INCOME_SALARY;
 
 export class BudgetCycleService {
+  // `clock` is the real "now"; rollover never runs past it, so a report range
+  // that passes a future date in as `today` cannot open a future cycle.
+  constructor(private readonly clock: () => Date = () => new Date()) {}
+
   // An ACTIVE cycle's endDate is its projected end (the day before the next
-  // expected payday); only a real salary closes it and fixes the actual end.
-  // Reads never move it - report ranges pass future dates in as `today`.
+  // expected payday). The first request after that day rolls it over: it is
+  // closed as-is and the next cycle starts from the saved salary and plan, so
+  // no salary entry is needed each month. A real salary still restarts it.
   async ensureCurrentCycle(userId: string, today = new Date(), transaction?: SequelizeTransaction) {
-    const active = await this.findActiveCycle(userId, transaction);
-    if (active) {
-      this.assertCompleteSnapshot(active.allocations ?? []);
-      return active;
-    }
-    const setting = await this.requireSetting(userId, transaction);
-    const range = currentCycleRange(today, Number(setting.salaryDay));
-    return this.createCycle(userId, range.startDate, Number(setting.salaryAmount), transaction);
+    const cycle = await this.currentCycle(userId, today, transaction);
+    this.assertCompleteSnapshot(cycle.allocations ?? []);
+    return cycle;
+  }
+
+  // Rolls an overdue ACTIVE cycle forward without creating a first one.
+  async rollOverActiveCycle(userId: string, today = new Date(), transaction?: SequelizeTransaction) {
+    return this.withSettingLock(userId, transaction, (locked, setting) => this.rollOver(userId, setting, this.rolloverDate(today), locked));
   }
 
   async findOrCreateForDate(userId: string, date: Date, transaction?: SequelizeTransaction) {
-    const active = await this.findActiveCycle(userId, transaction);
-    if (active && dateOnly(date) >= String(active.startDate).slice(0, 10)) {
-      this.assertCompleteSnapshot(active.allocations ?? []);
-      return active;
-    }
-    if (!active) return this.ensureCurrentCycle(userId, date, transaction);
+    if (!await this.findActiveCycle(userId, transaction)) return this.ensureCurrentCycle(userId, date, transaction);
+    const active = await this.ensureCurrentCycle(userId, this.clock(), transaction);
+    if (dateOnly(date) >= String(active.startDate).slice(0, 10)) return active;
     const historical = await BudgetCycle.findOne({
       where: { userId, startDate: { [Op.lte]: dateOnly(date) }, endDate: { [Op.gte]: dateOnly(date) } },
       include: [{ model: BudgetCycleAllocation, as: 'allocations' }],
@@ -98,10 +101,10 @@ export class BudgetCycleService {
   // immediately. The distributable total stays `salarySnapshot` (salary plus
   // any additional income already added), so only the percentages and the
   // per-category limits change - dates, salary and transactions are untouched.
-  // No ACTIVE cycle means nothing to update; the next salary starts one.
+  // An overdue cycle rolls over first so a closed cycle is never re-budgeted,
+  // and with no cycle yet (onboarding) the first one starts from this plan.
   async applyPlanToActiveCycle(userId: string, transaction?: SequelizeTransaction) {
-    const cycle = await this.findActiveCycle(userId, transaction);
-    if (!cycle) return null;
+    const cycle = await this.currentCycle(userId, this.clock(), transaction);
     const allocations = await BudgetAllocation.findAll({ where: { userId, active: true }, transaction });
     if (!completePlan(allocations)) return cycle;
     const snapshot = this.createSnapshot(Number(cycle.salarySnapshot), allocations);
@@ -117,12 +120,91 @@ export class BudgetCycleService {
     return BudgetCycle.findByPk(cycle.id, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction });
   }
 
+  // A salaryAmount change re-budgets the ACTIVE cycle from the new salary;
+  // additional income already added to it stays on top. Transactions,
+  // percentages and dates are untouched.
+  async applySalaryToActiveCycle(userId: string, salaryAmount: number, transaction?: SequelizeTransaction) {
+    const active = await this.findActiveCycle(userId, transaction);
+    if (!active || !completePlan(active.allocations ?? [])) return active;
+    const additional = await this.additionalIncomeAmount(active.id, undefined, transaction);
+    await this.rebalanceCycle(active, salaryAmount + additional, transaction);
+    return BudgetCycle.findByPk(active.id, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction });
+  }
+
   // A salaryDay change moves the ACTIVE cycle's projected end to the day
   // before the next payday under the new setting. The cycle stays ACTIVE.
   async rescheduleActiveCycle(userId: string, salaryDay: number, today = new Date(), transaction?: SequelizeTransaction) {
     const active = await this.findActiveCycle(userId, transaction);
     if (!active) return null;
     return active.update({ endDate: dateOnly(addDays(nextSalaryDate(today, salaryDay), -1)) }, { transaction });
+  }
+
+  private async currentCycle(userId: string, today: Date, transaction?: SequelizeTransaction) {
+    const active = await this.findActiveCycle(userId, transaction);
+    if (active && !this.isOverdue(active, this.rolloverDate(today))) return active;
+    return this.withSettingLock(userId, transaction, async (locked, setting) => {
+      const current = await this.rollOver(userId, setting, this.rolloverDate(today), locked);
+      if (current) return current;
+      const range = currentCycleRange(today, Number(setting.salaryDay));
+      return this.createCycle(userId, range.startDate, Number(setting.salaryAmount), locked);
+    });
+  }
+
+  // Closes each overdue ACTIVE cycle at its projected end and starts the next
+  // one the day after. Without a salary amount or a complete plan nothing can
+  // be budgeted, so the cycle stays ACTIVE and Home shows it as overdue.
+  private async rollOver(userId: string, setting: any, until: Date, transaction: SequelizeTransaction) {
+    let active = await this.findActiveCycle(userId, transaction);
+    if (!active || !this.isOverdue(active, until)) return active;
+    const salaryAmount = Number(setting.salaryAmount);
+    const plan = await BudgetAllocation.findAll({ where: { userId, active: true }, transaction });
+    if (!(salaryAmount > 0) || !completePlan(plan)) return active;
+    while (active && this.isOverdue(active, until)) {
+      const nextStart = addDays(parseDateOnly(String(active.endDate).slice(0, 10)), 1);
+      await active.update({ status: 'CLOSED' }, { transaction });
+      const next = await this.createCycle(userId, nextStart, salaryAmount, transaction);
+      active = await this.carryOverTransactions(active, next!, transaction);
+    }
+    return active;
+  }
+
+  // Transactions recorded while the old cycle ran past its projected end
+  // belong to the new one; additional income among them moves with them.
+  private async carryOverTransactions(from: any, to: any, transaction: SequelizeTransaction) {
+    const moved = await Transaction.findAll({
+      where: { budgetCycleId: from.id, occurredAt: { [Op.gte]: String(to.startDate).slice(0, 10) } },
+      include: [{ model: Category, as: 'category' }],
+      transaction,
+    });
+    if (moved.length === 0) return to;
+    await Transaction.update({ budgetCycleId: to.id }, { where: { id: moved.map((item: any) => item.id) }, transaction });
+    const income = moved
+      .filter((item: any) => item.type === 'INCOME' && item.status === 'CONFIRMED' && !isSalaryCategory(item.category))
+      .reduce((sum: number, item: any) => sum + Number(item.amount), 0);
+    if (income === 0) return to;
+    if (completePlan(from.allocations ?? [])) await this.reverseAdditionalIncome(from.id, income, transaction);
+    return this.addAdditionalIncome(to.id, income, transaction);
+  }
+
+  // Serializes cycle creation per user on their finance setting row, so
+  // concurrent first requests after payday create the new cycle only once
+  // (the unique (userId, startDate) index backs this up).
+  private async withSettingLock<T>(userId: string, transaction: SequelizeTransaction | undefined, work: (locked: SequelizeTransaction, setting: any) => Promise<T>) {
+    const run = async (locked: SequelizeTransaction) => {
+      const setting = await UserFinanceSetting.findByPk(userId, { transaction: locked, lock: true });
+      if (!setting) throw new AppError('FINANCE_SETTING_REQUIRED', 'Finance setting must be created first', 409);
+      return work(locked, setting);
+    };
+    return transaction ? run(transaction) : sequelize.transaction(run);
+  }
+
+  private rolloverDate(today: Date) {
+    const now = this.clock();
+    return today > now ? now : today;
+  }
+
+  private isOverdue(cycle: any, today: Date) {
+    return dateOnly(today) > String(cycle.endDate).slice(0, 10);
   }
 
   private async additionalIncomeAmount(budgetCycleId: string, excludeTransactionId?: string, transaction?: SequelizeTransaction) {

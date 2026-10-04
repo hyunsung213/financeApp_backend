@@ -22,15 +22,23 @@ export async function getFinanceSetting(req: Request, res: Response) {
 }
 
 export async function upsertFinanceSetting(req: Request, res: Response) {
-  const [data, created] = await UserFinanceSetting.findOrCreate({
-    where: { userId: userId(req) },
-    defaults: { ...req.body, userId: userId(req), salaryAmount: String(req.body.salaryAmount) },
+  const uid = userId(req);
+  const data = await sequelize.transaction(async (transaction) => {
+    const [setting, created] = await UserFinanceSetting.findOrCreate({
+      where: { userId: uid },
+      defaults: { ...req.body, userId: uid, salaryAmount: String(req.body.salaryAmount) },
+      transaction,
+    });
+    if (created) return setting;
+    const previous = { salaryDay: Number(setting.salaryDay), salaryAmount: Number(setting.salaryAmount) };
+    // Roll an overdue cycle over under the old setting first, so the new
+    // values land on the current cycle rather than a finished one.
+    await cycles.rollOverActiveCycle(uid, new Date(), transaction);
+    await setting.update({ ...req.body, salaryAmount: String(req.body.salaryAmount) }, { transaction });
+    if (Number(setting.salaryDay) !== previous.salaryDay) await cycles.rescheduleActiveCycle(uid, Number(setting.salaryDay), new Date(), transaction);
+    if (Number(setting.salaryAmount) !== previous.salaryAmount) await cycles.applySalaryToActiveCycle(uid, Number(setting.salaryAmount), transaction);
+    return setting;
   });
-  if (!created) {
-    const previousSalaryDay = Number(data.salaryDay);
-    await data.update({ ...req.body, salaryAmount: String(req.body.salaryAmount) });
-    if (Number(data.salaryDay) !== previousSalaryDay) await cycles.rescheduleActiveCycle(userId(req), Number(data.salaryDay));
-  }
   res.json({ success: true, data: jsonSafe(data) });
 }
 
