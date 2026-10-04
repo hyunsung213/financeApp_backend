@@ -807,12 +807,17 @@ Request body:
 
 ### `PUT /api/profile`
 
-로그인한 사용자의 나이와 거주지역을 저장합니다. 두 필드 중 하나 이상을 보내야 합니다.
+로그인한 사용자의 닉네임, 나이, 거주지역을 저장합니다. 세 필드 중 하나 이상을 보내야 하며, 보낸 필드만 변경됩니다.
+
+- `nickname`: 앞뒤 공백을 제거한 뒤 1~20자. 빈 문자열/공백만 있는 값/`null`은 `400 VALIDATION_ERROR`
+- `age`: 0~120 정수 또는 `null`
+- `region`: 1~100자 문자열 또는 `null`
 
 Request body:
 
 ```json
 {
+  "nickname": "상훈",
   "age": 25,
   "region": "광주"
 }

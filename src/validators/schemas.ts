@@ -27,7 +27,7 @@ export const queryDateSchema = z.object({ startDate: date.optional(), endDate: d
 export const policyQuerySchema = z.object({ category: z.string().optional(), region: z.string().optional(), age: z.coerce.number().int().min(0).max(120).optional(), providerType: z.enum(['GOVERNMENT', 'LOCAL_GOVERNMENT', 'PUBLIC', 'PRIVATE']).optional(), keyword: z.string().optional(), applicationStatus: z.enum(['OPEN', 'CLOSED']).optional() });
 export const policySyncSchema = z.object({ pageIndex: z.coerce.number().int().positive().default(1), display: z.coerce.number().int().min(1).max(100).default(100), allPages: z.boolean().default(true), generatePresentation: z.boolean().default(true) });
 export const policyCalendarEventSchema = z.object({ eventDate: date });
-export const userProfileSchema = z.object({ age: z.coerce.number().int().min(0).max(120).nullable().optional(), region: z.string().trim().min(1).max(100).nullable().optional() }).refine((value) => value.age !== undefined || value.region !== undefined, 'At least one profile field is required');
+export const userProfileSchema = z.object({ nickname: z.string().trim().min(1).max(20).optional(), age: z.coerce.number().int().min(0).max(120).nullable().optional(), region: z.string().trim().min(1).max(100).nullable().optional() }).refine((value) => value.nickname !== undefined || value.age !== undefined || value.region !== undefined, 'At least one profile field is required');
 export const notificationSchema = z.object({
   eventId: z.string().trim().min(1).max(255),
   packageName: z.string().trim().regex(/^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/, 'Invalid Android package name'),

@@ -14,6 +14,10 @@ export async function getProfile(req: Request, res: Response) {
 export async function updateProfile(req: Request, res: Response) {
   const profile = await User.findByPk(userId(req));
   if (!profile) throw new AppError('USER_NOT_FOUND', 'User not found', 404);
-  await profile.update({ age: req.body.age, region: req.body.region });
+  // Only fields present in the request are written, so a nickname-only update
+  // leaves age/region untouched (and vice versa).
+  const { nickname, age, region } = req.body;
+  const changes = Object.fromEntries(Object.entries({ nickname, age, region }).filter(([, value]) => value !== undefined));
+  await profile.update(changes);
   res.json({ success: true, data: jsonSafe(profile) });
 }
