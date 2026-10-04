@@ -9,3 +9,4 @@ export async function listCategoryTree(req: Request, res: Response) { res.json({
 export async function createCategory(req: Request, res: Response) { res.status(201).json({ success: true, data: jsonSafe(await service.create(uid(req), req.body)) }); }
 export async function updateCategory(req: Request, res: Response) { res.json({ success: true, data: jsonSafe(await service.update(uid(req), String(req.params.id), req.body)) }); }
 export async function deleteCategory(req: Request, res: Response) { res.json({ success: true, data: jsonSafe(await service.remove(uid(req), String(req.params.id))) }); }
+export async function resetCategoryPreference(req: Request, res: Response) { res.json({ success: true, data: jsonSafe(await service.resetPreference(uid(req), String(req.params.id))) }); }

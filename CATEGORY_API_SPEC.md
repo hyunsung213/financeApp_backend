@@ -40,13 +40,52 @@ GET http://localhost:4000/api/categories
       "purposeType": "GENERAL",
       "parentCategoryId": "core.expense",
       "isActive": true,
-      "sortOrder": 320
+      "sortOrder": 320,
+      "canonicalName": "식비",
+      "icon": null,
+      "color": null,
+      "isCustomized": false,
+      "isSystem": true,
+      "isCustom": false
     }
   ]
 }
 ```
 
 프론트엔드는 카테고리 이름이 아닌 `id`를 저장하고, 거래 및 고정지출 등록 시 `categoryId`로 전달해야 합니다.
+
+| 필드 | 설명 |
+| --- | --- |
+| `name` | 화면에 표시할 이름. 사용자가 기본 카테고리 이름을 바꿨다면 그 이름 |
+| `canonicalName` | 카테고리 row의 원래 이름 (기본값 복원·내부 의미 확인용) |
+| `icon` | 사용자가 고른 아이콘 key (`^[a-z0-9_]{1,40}$`), 없으면 `null` = 앱 기본 아이콘 |
+| `color` | 사용자가 고른 색 `#RRGGBB`, 없으면 `null` = 앱 기본 색 |
+| `isCustomized` | 현재 사용자의 이름/아이콘/색 override가 있는지 |
+
+사용자별 표시값은 `UserCategoryPreference` (`userId` + `categoryId`)에 저장되며, 공용 시스템 카테고리 row는 바뀌지 않습니다. 거래(`transaction.category.name`)와 리포트(`category`)에는 원래 이름이 그대로 내려오므로, 프론트엔드는 `categoryId`로 이 목록의 `name`을 찾아 표시합니다.
+
+## 2-1. 카테고리 수정 / 기본값 복원
+
+### `PATCH /api/categories/:id`
+
+```json
+{ "name": "카카오택시", "icon": "local_taxi_outlined", "color": "#5D9CEC" }
+```
+
+- 시스템 카테고리: `name`/`icon`/`color`만 받고 현재 사용자의 override로 저장합니다. `id`, `parentCategoryId`, `sortOrder`, `isActive`와 예산·거래·자동분류 연결은 바뀌지 않습니다. 원래 이름을 다시 보내면 이름 override가 지워집니다. `parentCategoryId`/`sortOrder`/`isActive`를 보내면 `403 SYSTEM_CATEGORY_IMMUTABLE`.
+- 사용자 정의 카테고리: `name`은 자기 row를 수정하고, `icon`/`color`는 override에 저장합니다. 다른 사용자의 카테고리는 `404`.
+- `icon`/`color`에 `null`을 보내면 해당 override만 지웁니다.
+- `userId`는 받지 않습니다. 항상 인증된 사용자 기준입니다.
+
+`POST /api/categories`도 `icon`/`color`를 함께 받을 수 있습니다.
+
+### `DELETE /api/categories/:id/preference`
+
+현재 사용자의 이름/아이콘/색 override를 지워 기본값으로 되돌립니다. 응답은 되돌린 카테고리입니다.
+
+### `DELETE /api/categories/:id`
+
+사용자 정의 카테고리만 비활성화(`isActive: false`)합니다. 시스템 카테고리는 `403 SYSTEM_CATEGORY_IMMUTABLE`.
 
 ## 3. 고정 시스템 카테고리 ID
 
@@ -291,7 +330,7 @@ POST http://localhost:4000/api/transactions
 
 1. 앱 시작 시 `GET /api/categories`를 호출합니다.
 2. `id`를 기준으로 카테고리를 저장합니다.
-3. 화면에는 `name`을 표시합니다.
+3. 화면에는 `name`을 표시합니다. 거래·리포트처럼 다른 응답의 카테고리 이름은 `categoryId`로 이 목록의 `name`을 찾아 표시합니다.
 4. 거래 및 고정지출 API에는 `categoryId`만 전달합니다.
-5. 카테고리 이름을 직접 API에 전달하지 않습니다.
+5. 카테고리 이름을 직접 API에 전달하지 않습니다. 이름으로 카테고리를 찾지 않습니다 (사용자가 바꿀 수 있음).
 6. `parentCategoryId`가 `null`이면 대분류이고, 값이 있으면 해당 대분류의 소분류입니다.

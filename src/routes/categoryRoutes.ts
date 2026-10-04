@@ -10,3 +10,4 @@ categoryRoutes.get('/tree', controller.listCategoryTree);
 categoryRoutes.post('/', validate(categorySchema), controller.createCategory);
 categoryRoutes.patch('/:id', validate(categoryPatchSchema), controller.updateCategory);
 categoryRoutes.delete('/:id', controller.deleteCategory);
+categoryRoutes.delete('/:id/preference', controller.resetCategoryPreference);
