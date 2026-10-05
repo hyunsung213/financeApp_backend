@@ -207,7 +207,9 @@ export class BudgetCycleService {
     return dateOnly(today) > String(cycle.endDate).slice(0, 10);
   }
 
-  private async additionalIncomeAmount(budgetCycleId: string, excludeTransactionId?: string, transaction?: SequelizeTransaction) {
+  // Confirmed non-salary income recorded in the cycle - the part of
+  // `salarySnapshot` that sits on top of the saved salary.
+  async additionalIncomeAmount(budgetCycleId: string, excludeTransactionId?: string, transaction?: SequelizeTransaction) {
     const incomes = await Transaction.findAll({
       where: { budgetCycleId, type: 'INCOME', status: 'CONFIRMED', ...(excludeTransactionId ? { id: { [Op.ne]: excludeTransactionId } } : {}) },
       include: [{ model: Category, as: 'category' }],

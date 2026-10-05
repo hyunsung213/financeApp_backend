@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { Op } from 'sequelize';
 import { sequelize } from '../src/config/database';
 import { DEFAULT_BUDGET_PLAN, allocationTypeForCategory, budgetCategoryName, spendabilityForCategory } from '../src/constants/budgetPlan';
+import { home } from '../src/controllers/dashboardController';
 import { upsertBudgetPlan, upsertFinanceSetting } from '../src/controllers/financeController';
 import { BudgetAllocation, BudgetCycle, BudgetCycleAllocation, Transaction, User, UserFinanceSetting } from '../src/models';
 import { BudgetCycleService } from '../src/services/budgetCycleService';
@@ -185,6 +186,21 @@ describeDb('salary cycle lazy rollover', () => {
     cycle = (await cyclesOf(userId))[0];
     expect([Number(cycle.salarySnapshot), amountOf(cycle, 'core.saving')]).toEqual([3_100_000, 775_000]);
     expect(await Transaction.count({ where: { userId } })).toBe(1);
+  });
+
+  it('Home reports the additional income included in the cycle budget, so a salary change can be previewed', async () => {
+    const userId = await createUser(2_500_000, 1);
+    await savePlan(userId);
+    const current = await new BudgetCycleService().ensureCurrentCycle(userId);
+    await addIncome(userId, current.id, 300_000, String(current.startDate));
+    await new BudgetCycleService().addAdditionalIncome(current.id, 300_000);
+    await callController(upsertFinanceSetting, userId, { salaryAmount: 800_000, salaryDay: 1, reportingStartDay: 1 });
+
+    const { data } = await callController(home, userId, undefined);
+    // salary 800,000 + additional 300,000; the daily-spendable pool is the
+    // total minus 저축 20% / 투자 10% / 고정지출 25% (rounding lands in 기타).
+    expect([data.budget.salaryAmount, data.budget.additionalIncomeAmount]).toEqual([1_100_000, 300_000]);
+    expect(data.budget.usableBudgetAmount).toBe(1_100_000 - 220_000 - 110_000 - 275_000);
   });
 
   it('CASE 8: onboarding (setting then plan) starts the first cycle, which then renews on the next payday unaided', async () => {
