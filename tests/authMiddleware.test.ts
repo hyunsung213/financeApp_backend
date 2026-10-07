@@ -60,7 +60,7 @@ describe('authMiddleware', () => {
   });
 
   it('refuses to start in production without the CA that verifies the database certificate', async () => {
-    await expect(run({}, { NODE_ENV: 'production', DEV_AUTH_BYPASS: 'false', SUPABASE_URL: 'https://real.supabase.co', DB_SSL_CA: '' })).rejects.toThrow(/DB_SSL_CA/);
+    await expect(run({}, { NODE_ENV: 'production', DEV_AUTH_BYPASS: 'false', SUPABASE_URL: 'https://real.supabase.co', DB_SSL: 'true', DB_SSL_CA: '' })).rejects.toThrow(/DB_SSL_CA/);
   });
 
   it('requires a token in production even when a bypass is attempted at runtime', async () => {
