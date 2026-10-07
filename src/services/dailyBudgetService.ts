@@ -84,8 +84,14 @@ export class DailyBudgetService {
     const savingBudgetAmount = allocationAmount('core.saving');
     const investmentBudgetAmount = allocationAmount('core.investment');
     const remainingUsableAmount = usableBudgetAmount - variableExpenseAmount;
-    const todayRecommendedAmount = Math.max(0, Math.floor(remainingUsableAmount / remainingDays));
     const todayVariableExpenseAmount = confirmedExpenses.filter((transaction) => transaction.budgetCategoryId !== undefined && isDailySpendableBudgetCategory(transaction.budgetCategoryId) && dateOnly(transaction.occurredAt) === todayKey).reduce((sum, transaction) => sum + actualAmount(transaction), 0);
+    // Today's allowance is fixed for the day: the usable budget as it stood at
+    // the start of today (i.e. before today's spending), spread over the days
+    // left. Today's spending is then taken off that allowance exactly once in
+    // remainingTodayAmount - it must not also shrink the allowance itself,
+    // or every won spent today would be deducted twice from the headline.
+    const usableAtStartOfToday = remainingUsableAmount + todayVariableExpenseAmount;
+    const todayRecommendedAmount = Math.max(0, Math.floor(usableAtStartOfToday / remainingDays));
     const remainingTodayAmount = todayRecommendedAmount - todayVariableExpenseAmount;
     const plannedSpendToDate = Math.floor(usableBudgetAmount * elapsedDays / cycleDays);
     const actualSpendToDate = variableExpenseAmount;

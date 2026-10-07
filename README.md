@@ -72,12 +72,12 @@ tests/dailyBudgetService.test.ts
 ```text
 categoryBudget = floor(salarySnapshot × categoryPercentage / 100)
 usableBudget = 고정지출·저축·투자를 제외한 지출 대분류 예산의 합계
-remainingUsable = usableBudget - confirmed (amount - refundedAmount) 지출
-todayRecommended = max(0, floor(remainingUsable / 오늘 포함 다음 월급일까지 남은 일수))
+remainingUsable = usableBudget - 오늘까지의 confirmed (amount - refundedAmount) 지출
+todayRecommended = max(0, floor((usableBudget - 어제까지의 확정 사용가능 지출) / 오늘 포함 다음 월급일까지 남은 일수))
 remainingToday = todayRecommended - 오늘의 확정 사용가능 지출
 ```
 
-`remainingToday`는 오늘 권장액을 초과하면 음수가 될 수 있습니다. `todayRecommended` 자체는 음수가 되지 않습니다.
+오늘 권장액은 오늘 시작 시점의 남은 예산을 남은 일수로 나눈 값이라 하루 동안 고정이며, 오늘 지출은 `remainingToday`에서 한 번만 차감됩니다. `remainingToday`는 오늘 권장액을 초과하면 음수가 될 수 있습니다. `todayRecommended` 자체는 음수가 되지 않습니다.
 
 월급 예산은 지출 대분류 10개·저축·투자의 12개 항목을 사용하며, 전체 비율의 합계는 100%여야 합니다. `PENDING`, `EXCLUDED`, 다음 날짜의 확정 거래는 사용가능 잔액에서 제외됩니다. 고정지출 거래와 예정 occurrence는 사용가능 예산을 이중 차감하지 않습니다. 실제 급여 수입만 주기를 전환하며, 추가 수입은 현재 주기의 스냅샷 비율대로 각 예산을 늘립니다.
 
