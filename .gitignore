@@ -5,3 +5,5 @@ supabase/.temp/
 coverage/
 *.log
 .DS_Store
+.env.*
+!.env.example
