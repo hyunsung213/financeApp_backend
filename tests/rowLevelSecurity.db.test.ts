@@ -70,6 +70,15 @@ describeDb('row level security and grants', () => {
     });
   });
 
+  it('a table created later is not granted to the client roles (20261007130100)', async () => {
+    await rolledBack(async (transaction) => {
+      await raw('create table public."__default_acl_probe" (id int)', transaction);
+      const grants = await q(`select distinct grantee from information_schema.role_table_grants where table_schema = 'public' and table_name = '__default_acl_probe' order by 1`, transaction);
+      expect(grants.map((row) => row.grantee)).not.toEqual(expect.arrayContaining(['anon']));
+      expect(grants.map((row) => row.grantee)).not.toEqual(expect.arrayContaining(['authenticated']));
+    });
+  });
+
   it('Policy is readable by client roles but not writable', async () => {
     await rolledBack(async (transaction) => {
       await actAs(transaction, 'anon');
