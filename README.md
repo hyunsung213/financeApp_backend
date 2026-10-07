@@ -30,7 +30,9 @@ tests/dailyBudgetService.test.ts
 
 사용자 맞춤 정책은 `PUT /api/profile`로 나이와 거주지역을 저장한 뒤 `GET /api/policies/recommended`로 조회합니다. 개발용 seed 사용자는 기본값으로 25세·광주가 저장됩니다.
 
-`DB_SSL=true`가 기본값이며, `pg` 드라이버에 TLS를 요구하면서 로컬 인증서 검증은 비활성화한 설정을 사용합니다. 운영 환경에서는 Supabase CA 인증서를 내려받아 `rejectUnauthorized: true`와 root certificate를 설정하세요.
+`DB_SSL=true`가 기본값입니다. `DB_SSL_CA`에 Supabase root CA(Dashboard → Database → SSL Configuration에서 내려받은 PEM, 한 줄로 넣을 때는 줄바꿈을 `\n`으로)를 넣으면 DB 인증서를 검증(`rejectUnauthorized: true`)하고, 없으면 TLS만 요구하고 검증은 하지 않습니다. `NODE_ENV=production`에서는 `DB_SSL_CA`가 없으면 서버가 시작되지 않습니다.
+
+`npm run seed`는 개발 DB 전용입니다. `NODE_ENV=production`이거나 seed 사용자 외의 사용자가 있는 DB에서는 실행을 거부합니다(개발 DB에서만 `ALLOW_SEED_WITH_USERS=true`로 우회).
 
 개발 중 로그인 없이 API를 호출하려면 `.env`에서 `DEV_AUTH_BYPASS=true`로 설정합니다. 이 옵션은 `NODE_ENV=production`에서는 무시되며, 개발용 seed 사용자(`seed@example.local`)로 요청을 처리합니다. 운영 배포 전 반드시 `DEV_AUTH_BYPASS=false`로 설정하세요.
 

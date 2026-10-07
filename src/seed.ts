@@ -1,4 +1,5 @@
 import { Op } from 'sequelize';
+import { env } from './config/env';
 import { sequelize } from './config/database';
 import {
   BudgetAllocation,
@@ -48,7 +49,22 @@ async function clearSeedData() {
   await User.destroy({ where: { id: seedUserId } });
 }
 
+// The seed writes a shared demo account and [SEED] policies that every user
+// would see in the policy catalog, so it only runs against a development
+// database: never with NODE_ENV=production, and not once real users exist
+// (NODE_ENV defaults to development, so that alone does not protect a
+// production DATABASE_URL). ALLOW_SEED_WITH_USERS=true overrides the second
+// check for a development database that has its own sign-ins.
+async function assertSeedableDatabase() {
+  if (env.NODE_ENV === 'production') throw new Error('Refusing to seed: NODE_ENV=production');
+  const otherUsers = await User.count({ where: { id: { [Op.ne]: seedUserId } } });
+  if (otherUsers > 0 && process.env.ALLOW_SEED_WITH_USERS !== 'true') {
+    throw new Error(`Refusing to seed: the database has ${otherUsers} non-seed user(s). Set ALLOW_SEED_WITH_USERS=true only for a development database.`);
+  }
+}
+
 async function main() {
+  await assertSeedableDatabase();
   await sequelize.sync({ alter: false });
   await clearSeedData();
 
@@ -177,5 +193,5 @@ async function main() {
 }
 
 main()
-  .catch(() => { process.exitCode = 1; })
+  .catch((error) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; })
   .finally(() => sequelize.close());

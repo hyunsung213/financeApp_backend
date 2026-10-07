@@ -59,9 +59,13 @@ describe('authMiddleware', () => {
     await expect(run({}, { NODE_ENV: 'production', DEV_AUTH_BYPASS: 'false', SUPABASE_URL: 'https://your-project.supabase.co' })).rejects.toThrow(/SUPABASE_URL/);
   });
 
+  it('refuses to start in production without the CA that verifies the database certificate', async () => {
+    await expect(run({}, { NODE_ENV: 'production', DEV_AUTH_BYPASS: 'false', SUPABASE_URL: 'https://real.supabase.co', DB_SSL_CA: '' })).rejects.toThrow(/DB_SSL_CA/);
+  });
+
   it('requires a token in production even when a bypass is attempted at runtime', async () => {
     // env refuses the bypass flag at startup; this covers the middleware's own guard as well.
-    const { error } = await run({}, { NODE_ENV: 'production', DEV_AUTH_BYPASS: 'false', SUPABASE_URL: 'https://real.supabase.co' });
+    const { error } = await run({}, { NODE_ENV: 'production', DEV_AUTH_BYPASS: 'false', SUPABASE_URL: 'https://real.supabase.co', DB_SSL_CA: 'test-ca' });
     expect(error).toMatchObject({ status: 401 });
   });
 
