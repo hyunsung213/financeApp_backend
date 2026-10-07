@@ -21,8 +21,10 @@ tests/dailyBudgetService.test.ts
 
 1. `.env.example`을 참고해 `.env`를 설정합니다. `DATABASE_URL`은 `DATABASE_URL=...` 형식으로 작성해야 합니다.
 2. Express + Sequelize 장기 실행 백엔드는 Supabase Session Pooler `5432` 연결을 사용합니다.
-3. `npm install` 후 `npm run db:sync`로 Sequelize 모델을 DB 테이블에 동기화합니다. 운영 환경에서는 별도 migration 도구 사용을 권장합니다.
-4. `npm run seed`로 개발용 샘플 데이터를 넣습니다. `[SEED]` 정책은 mock 데이터입니다. seed는 전용 사용자 데이터를 재생성하므로 반복 실행해도 같은 시나리오를 확인할 수 있습니다.
+3. `npm install` 후 `supabase/migrations/`의 SQL을 파일 이름 순서대로 모두 적용합니다(`supabase db push` 또는 SQL Editor). 빈 DB도 migration만으로 전체 schema·RLS·grant·시스템 카테고리가 만들어지며, `npm run db:sync`는 사용하지 않습니다(테이블과 model 이름의 index만 만들고 constraint·RLS·grant는 빠뜨립니다. production에서는 실행을 거부합니다).
+   - 이미 `db:sync`로 만들어진 기존 DB에는 `20260913000000_baseline_schema.sql`이 아무것도 바꾸지 않으므로 적용 완료로 기록만 합니다(`supabase migration repair --status applied 20260913000000`). 나머지 migration도 모두 재실행 가능합니다.
+   - Supabase 프로젝트가 기본으로 가진 `anon`/`authenticated`/`service_role` role과 `auth.uid()`를 전제로 합니다.
+4. `npm run seed`로 개발용 샘플 데이터를 넣습니다(seed는 schema를 만들거나 바꾸지 않으므로 3을 먼저 합니다). `[SEED]` 정책은 mock 데이터입니다. seed는 전용 사용자 데이터를 재생성하므로 반복 실행해도 같은 시나리오를 확인할 수 있습니다.
 5. `npm run dev`로 `http://localhost:4000`에서 실행합니다. Android Emulator에서는 `http://10.0.2.2:4000`을 사용합니다.
 6. `npm test`, `npm run typecheck`, `npm run build`로 검증합니다.
 

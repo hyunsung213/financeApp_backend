@@ -65,7 +65,6 @@ async function assertSeedableDatabase() {
 
 async function main() {
   await assertSeedableDatabase();
-  await sequelize.sync({ alter: false });
   await clearSeedData();
 
   const user = await User.create({ id: seedUserId, email: 'seed@example.local', nickname: 'MVP Seed', age: 25, region: '광주', timezone: 'Asia/Seoul' });
