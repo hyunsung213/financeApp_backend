@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { Op } from 'sequelize';
 import { sequelize } from '../config/database';
-import { BudgetCycleService, isSalaryCategory } from '../services/budgetCycleService';
+import { BudgetCycleService, assertIncomeNotInFuture, isSalaryCategory } from '../services/budgetCycleService';
 import { Category, Transaction } from '../models';
 import { parseDateOnly, dateOnly } from '../utils/dates';
 import { AppError } from '../utils/errors';
@@ -37,6 +37,7 @@ export async function createTransaction(req: Request, res: Response) {
     const category = await requireCategory(req.body.categoryId, uid(req), transaction);
     validateType(category, req.body.type);
     const occurredAt = parseDateOnly(req.body.occurredAt);
+    assertIncomeNotInFuture(req.body.type, occurredAt);
     const status = req.body.status ?? 'CONFIRMED';
     const salaryIncome = req.body.type === 'INCOME' && status === 'CONFIRMED' && isSalaryCategory(category);
     const cycle = salaryIncome
@@ -84,6 +85,7 @@ export async function updateTransaction(req: Request, res: Response) {
     if (additionalIncome(previous, previousCategory)) await cycleService.reverseAdditionalIncome(previous.budgetCycleId, Number(previous.amount), transaction);
     const next = { ...previous, ...req.body, status: req.body.status ?? previous.status, type: req.body.type ?? previous.type, amount: req.body.amount === undefined ? Number(previous.amount) : Number(req.body.amount), occurredAt: req.body.occurredAt ?? previous.occurredAt };
     const occurredAt = parseDateOnly(String(next.occurredAt));
+    assertIncomeNotInFuture(next.type, occurredAt);
     const salaryIncome = confirmedIncome(next, category) && isSalaryCategory(category);
     const cycle = salaryIncome
       ? await cycleService.startCycleFromSalary(uid(req), occurredAt, next.amount, transaction, item.id)

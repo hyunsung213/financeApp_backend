@@ -27,6 +27,15 @@ const completePlan = (items: Array<{ categoryId?: string; percentage: number }>)
 
 export const isSalaryCategory = (category: any) => category?.id === CATEGORY_IDS.INCOME_SALARY || category?.sourceCategoryId === CATEGORY_IDS.INCOME_SALARY;
 
+// Income counts from the day it occurs. A future-dated INCOME would raise
+// today's budget (additional income is added to the cycle snapshot as soon as
+// it is saved) or start a future cycle (salary), i.e. money that does not
+// exist yet would be spendable today - so it is rejected. Expenses may still
+// be dated ahead; Home only counts them from their date.
+export function assertIncomeNotInFuture(type: string, occurredAt: Date, now = new Date()) {
+  if (type === 'INCOME' && dateOnly(occurredAt) > dateOnly(now)) throw new AppError('FUTURE_INCOME_NOT_ALLOWED', 'Income cannot be dated after today', 400);
+}
+
 export class BudgetCycleService {
   // `clock` is the real "now"; rollover never runs past it, so a report range
   // that passes a future date in as `today` cannot open a future cycle.
@@ -65,36 +74,41 @@ export class BudgetCycleService {
   // `salaryTransactionId` is the salary row being edited, if any, so it is not
   // counted as additional income while its old values are still stored.
   async startCycleFromSalary(userId: string, salaryDate: Date, salaryAmount: number, transaction?: SequelizeTransaction, salaryTransactionId?: string) {
-    const active = await this.findActiveCycle(userId, transaction);
-    const startDate = dateOnly(salaryDate);
-    if (active && String(active.startDate).slice(0, 10) === startDate) {
-      // Same start date means re-entering this cycle's salary (startDate is
-      // unique per user); additional income already added to it must stay.
-      const additional = await this.additionalIncomeAmount(active.id, salaryTransactionId, transaction);
-      await this.rebalanceCycle(active, salaryAmount + additional, transaction);
-      return BudgetCycle.findByPk(active.id, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction });
-    }
-    if (active) {
-      if (startDate < String(active.startDate).slice(0, 10)) throw new AppError('INVALID_SALARY_DATE', 'Salary date cannot precede the active budget cycle', 400);
-      await active.update({ status: 'CLOSED', endDate: dateOnly(addDays(salaryDate, -1)) }, { transaction });
-    }
-    return this.createCycle(userId, salaryDate, salaryAmount, transaction);
+    // Serialized on the finance setting row like every other cycle write, so
+    // two salary entries cannot both read "no newer ACTIVE cycle" and each
+    // start one (the partial unique index on ACTIVE backs this up).
+    return this.withSettingLock(userId, transaction, async (locked) => {
+      const active = await this.findActiveCycle(userId, locked);
+      const startDate = dateOnly(salaryDate);
+      if (active && String(active.startDate).slice(0, 10) === startDate) {
+        // Same start date means re-entering this cycle's salary (startDate is
+        // unique per user); additional income already added to it must stay.
+        const additional = await this.additionalIncomeAmount(active.id, salaryTransactionId, locked);
+        await this.rebalanceCycle(active, salaryAmount + additional, locked);
+        return BudgetCycle.findByPk(active.id, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction: locked });
+      }
+      if (active) {
+        if (startDate < String(active.startDate).slice(0, 10)) throw new AppError('INVALID_SALARY_DATE', 'Salary date cannot precede the active budget cycle', 400);
+        await active.update({ status: 'CLOSED', endDate: dateOnly(addDays(salaryDate, -1)) }, { transaction: locked });
+      }
+      return this.createCycle(userId, salaryDate, salaryAmount, locked);
+    });
   }
 
   async addAdditionalIncome(budgetCycleId: string, amount: number, transaction?: SequelizeTransaction) {
-    const cycle = await BudgetCycle.findByPk(budgetCycleId, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction });
-    if (!cycle) throw new AppError('BUDGET_CYCLE_NOT_FOUND', 'Budget cycle not found', 404);
-    await this.rebalanceCycle(cycle, Number(cycle.salarySnapshot) + amount, transaction);
-    return BudgetCycle.findByPk(cycle.id, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction });
+    return this.withLockedCycle(budgetCycleId, transaction, async (cycle, locked) => {
+      await this.rebalanceCycle(cycle, Number(cycle.salarySnapshot) + amount, locked);
+      return BudgetCycle.findByPk(cycle.id, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction: locked });
+    });
   }
 
   async reverseAdditionalIncome(budgetCycleId: string, amount: number, transaction?: SequelizeTransaction) {
-    const cycle = await BudgetCycle.findByPk(budgetCycleId, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction });
-    if (!cycle) throw new AppError('BUDGET_CYCLE_NOT_FOUND', 'Budget cycle not found', 404);
-    const nextSalaryAmount = Number(cycle.salarySnapshot) - amount;
-    if (nextSalaryAmount < 0) throw new AppError('INVALID_INCOME_REVERSAL', 'Income reversal cannot make the cycle budget negative', 400);
-    await this.rebalanceCycle(cycle, nextSalaryAmount, transaction);
-    return BudgetCycle.findByPk(cycle.id, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction });
+    return this.withLockedCycle(budgetCycleId, transaction, async (cycle, locked) => {
+      const nextSalaryAmount = Number(cycle.salarySnapshot) - amount;
+      if (nextSalaryAmount < 0) throw new AppError('INVALID_INCOME_REVERSAL', 'Income reversal cannot make the cycle budget negative', 400);
+      await this.rebalanceCycle(cycle, nextSalaryAmount, locked);
+      return BudgetCycle.findByPk(cycle.id, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction: locked });
+    });
   }
 
   // Re-snapshots the ACTIVE cycle from the saved plan so a plan change applies
@@ -104,31 +118,37 @@ export class BudgetCycleService {
   // An overdue cycle rolls over first so a closed cycle is never re-budgeted,
   // and with no cycle yet (onboarding) the first one starts from this plan.
   async applyPlanToActiveCycle(userId: string, transaction?: SequelizeTransaction) {
-    const cycle = await this.currentCycle(userId, this.clock(), transaction);
-    const allocations = await BudgetAllocation.findAll({ where: { userId, active: true }, transaction });
-    if (!completePlan(allocations)) return cycle;
-    const snapshot = this.createSnapshot(Number(cycle.salarySnapshot), allocations);
-    const totals = this.snapshotTotals(snapshot);
-    await cycle.update({
-      plannedSavingAmount: String(totals.saving),
-      plannedInvestmentAmount: String(totals.investment),
-      plannedFlexibleAmount: String(totals.dailySpendable),
-      plannedReservedAmount: String(totals.fixedExpense),
-    }, { transaction });
-    await BudgetCycleAllocation.destroy({ where: { budgetCycleId: cycle.id }, transaction });
-    await BudgetCycleAllocation.bulkCreate(snapshot.map((item) => ({ ...item, budgetCycleId: cycle.id })), { transaction });
-    return BudgetCycle.findByPk(cycle.id, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction });
+    // Replacing the snapshot rows must not interleave with an income
+    // rebalance (which updates those rows by id), so it takes the same lock.
+    return this.withSettingLock(userId, transaction, async (locked) => {
+      const cycle = await this.currentCycle(userId, this.clock(), locked);
+      const allocations = await BudgetAllocation.findAll({ where: { userId, active: true }, transaction: locked });
+      if (!completePlan(allocations)) return cycle;
+      const snapshot = this.createSnapshot(Number(cycle.salarySnapshot), allocations);
+      const totals = this.snapshotTotals(snapshot);
+      await cycle.update({
+        plannedSavingAmount: String(totals.saving),
+        plannedInvestmentAmount: String(totals.investment),
+        plannedFlexibleAmount: String(totals.dailySpendable),
+        plannedReservedAmount: String(totals.fixedExpense),
+      }, { transaction: locked });
+      await BudgetCycleAllocation.destroy({ where: { budgetCycleId: cycle.id }, transaction: locked });
+      await BudgetCycleAllocation.bulkCreate(snapshot.map((item) => ({ ...item, budgetCycleId: cycle.id })), { transaction: locked });
+      return BudgetCycle.findByPk(cycle.id, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction: locked });
+    });
   }
 
   // A salaryAmount change re-budgets the ACTIVE cycle from the new salary;
   // additional income already added to it stays on top. Transactions,
   // percentages and dates are untouched.
   async applySalaryToActiveCycle(userId: string, salaryAmount: number, transaction?: SequelizeTransaction) {
-    const active = await this.findActiveCycle(userId, transaction);
-    if (!active || !completePlan(active.allocations ?? [])) return active;
-    const additional = await this.additionalIncomeAmount(active.id, undefined, transaction);
-    await this.rebalanceCycle(active, salaryAmount + additional, transaction);
-    return BudgetCycle.findByPk(active.id, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction });
+    return this.withSettingLock(userId, transaction, async (locked) => {
+      const active = await this.findActiveCycle(userId, locked);
+      if (!active || !completePlan(active.allocations ?? [])) return active;
+      const additional = await this.additionalIncomeAmount(active.id, undefined, locked);
+      await this.rebalanceCycle(active, salaryAmount + additional, locked);
+      return BudgetCycle.findByPk(active.id, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction: locked });
+    });
   }
 
   // A salaryDay change moves the ACTIVE cycle's projected end to the day
@@ -186,9 +206,26 @@ export class BudgetCycleService {
     return this.addAdditionalIncome(to.id, income, transaction);
   }
 
-  // Serializes cycle creation per user on their finance setting row, so
-  // concurrent first requests after payday create the new cycle only once
-  // (the unique (userId, startDate) index backs this up).
+  // Income is applied as read-modify-write on the cycle snapshot. The cycle
+  // is (re)read only once the per-user setting lock is held, so concurrent
+  // income writes on the same cycle apply one after another instead of the
+  // last writer overwriting the others' snapshot (audit P0-06).
+  private async withLockedCycle<T>(budgetCycleId: string, transaction: SequelizeTransaction | undefined, work: (cycle: any, locked: SequelizeTransaction) => Promise<T>) {
+    const owner = await BudgetCycle.findByPk(budgetCycleId, { attributes: ['id', 'userId'], transaction });
+    if (!owner) throw new AppError('BUDGET_CYCLE_NOT_FOUND', 'Budget cycle not found', 404);
+    return this.withSettingLock(owner.userId, transaction, async (locked) => {
+      const cycle = await BudgetCycle.findByPk(budgetCycleId, { include: [{ model: BudgetCycleAllocation, as: 'allocations' }], transaction: locked });
+      if (!cycle) throw new AppError('BUDGET_CYCLE_NOT_FOUND', 'Budget cycle not found', 404);
+      return work(cycle, locked);
+    });
+  }
+
+  // Serializes every cycle write per user on their finance setting row
+  // (SELECT ... FOR UPDATE): cycle creation, rollover, salary restarts,
+  // income rebalances and plan re-snapshots all go through here, so two
+  // requests for the same user never operate on a stale cycle. Concurrent
+  // first requests after payday therefore create the new cycle only once
+  // (the unique (userId, startDate) and ACTIVE-per-user indexes back this up).
   private async withSettingLock<T>(userId: string, transaction: SequelizeTransaction | undefined, work: (locked: SequelizeTransaction, setting: any) => Promise<T>) {
     const run = async (locked: SequelizeTransaction) => {
       const setting = await UserFinanceSetting.findByPk(userId, { transaction: locked, lock: true });
