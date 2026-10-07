@@ -20,6 +20,12 @@ const schema = z.object({
     CORS_ORIGIN: z.string().default('http://localhost:3000'),
   DB_SSL: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   DEV_AUTH_BYPASS: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+}).superRefine((value, ctx) => {
+  // Production must authenticate every request with Supabase: refuse to start
+  // rather than silently ignore a bypass or a placeholder project.
+  if (value.NODE_ENV !== 'production') return;
+  if (value.DEV_AUTH_BYPASS) ctx.addIssue({ code: 'custom', path: ['DEV_AUTH_BYPASS'], message: 'DEV_AUTH_BYPASS must be false in production' });
+  if (/your-project|localhost/.test(value.SUPABASE_URL)) ctx.addIssue({ code: 'custom', path: ['SUPABASE_URL'], message: 'SUPABASE_URL must point at the real Supabase project in production' });
 });
 
 export const env = schema.parse(process.env);
