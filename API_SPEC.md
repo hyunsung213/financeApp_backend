@@ -462,6 +462,8 @@ Request body:
 
 `core.income.salary` 카테고리의 확정 수입은 실제 급여로 처리되어 기존 활성 주기를 닫고 새 주기를 시작합니다. 다른 확정 수입은 추가수입으로 처리되어 현재 주기의 12개 예산을 해당 주기에 저장된 비율대로 증액합니다.
 
+`INCOME`은 발생일(`occurredAt`)이 오늘(KST) 이후일 수 없습니다. 미래 날짜의 수입은 생성·수정 모두 `400 FUTURE_INCOME_NOT_ALLOWED`로 거절되며, 수입은 발생일부터 예산에 반영됩니다. `EXPENSE`/`SAVING`은 미래 날짜를 허용하되 홈 계산에는 해당 날짜부터 반영됩니다.
+
 ### `GET /api/transactions`
 
 Query parameters:
