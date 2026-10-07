@@ -38,6 +38,9 @@ export const DEFAULT_BUDGET_PLAN: BudgetPlanItem[] = [
 export const budgetCategoryName = (categoryId: string) => categoryName.get(categoryId) ?? categoryId;
 export const isBudgetCategoryId = (categoryId: string): categoryId is BudgetCategoryId => (BUDGET_CATEGORY_IDS as readonly string[]).includes(categoryId);
 export const isExpenseBudgetCategory = (categoryId: string) => categoryId.startsWith('core.expense.');
+// The 10 지출 대분류 the budget plan allocates to. Every EXPENSE category is
+// one of these or sits directly under one, so all spending has a budget.
+export const isExpenseBudgetRoot = (categoryId: string) => isBudgetCategoryId(categoryId) && isExpenseBudgetCategory(categoryId);
 export const isDailySpendableBudgetCategory = (categoryId: string) => isExpenseBudgetCategory(categoryId) && categoryId !== CATEGORY_IDS.EXPENSE_FIXED;
 export const allocationTypeForCategory = (categoryId: string) => categoryId === CATEGORY_IDS.SAVING ? 'SAVING' : categoryId === CATEGORY_IDS.INVESTMENT ? 'INVESTMENT' : categoryId === CATEGORY_IDS.EXPENSE_FIXED ? 'FIXED_LIVING' : 'FLEXIBLE';
 export const spendabilityForCategory = (categoryId: string) => categoryId === CATEGORY_IDS.SAVING || categoryId === CATEGORY_IDS.INVESTMENT ? 'LOCKED' : categoryId === CATEGORY_IDS.EXPENSE_FIXED ? 'RESERVED' : 'FLEXIBLE';

@@ -1,4 +1,5 @@
 import { isDailySpendableBudgetCategory, isExpenseBudgetCategory } from '../constants/budgetPlan';
+import { CATEGORY_IDS } from '../constants/categoryCatalog';
 import { dateOnly, daysInclusive } from '../utils/dates';
 
 export type BudgetTransaction = {
@@ -64,10 +65,17 @@ export class DailyBudgetService {
     const remainingDays = Math.max(1, daysInclusive(clampedToday, input.cycleEnd));
     const todayKey = dateOnly(clampedToday);
     const actualAmount = (transaction: BudgetTransaction) => Math.max(0, transaction.amount - transaction.refundedAmount);
-    const confirmedExpenses = input.transactions.filter((transaction) => transaction.status === 'CONFIRMED' && transaction.type === 'EXPENSE' && dateOnly(transaction.occurredAt) <= todayKey);
+    // Every confirmed expense counts against exactly one 지출 대분류 budget. One
+    // whose root has no expense allocation (a category saved before the
+    // parent rules, a retired system 대분류, a missing row) counts under 기타
+    // rather than silently leaving the budget.
+    const allocatedExpenseIds = new Set(input.allocations.map((allocation) => allocation.categoryId).filter(isExpenseBudgetCategory));
+    const budgetIdOf = (transaction: BudgetTransaction) => transaction.budgetCategoryId && allocatedExpenseIds.has(transaction.budgetCategoryId) ? transaction.budgetCategoryId : CATEGORY_IDS.EXPENSE_OTHER;
+    const confirmedExpenses = input.transactions
+      .filter((transaction) => transaction.status === 'CONFIRMED' && transaction.type === 'EXPENSE' && dateOnly(transaction.occurredAt) <= todayKey)
+      .map((transaction) => ({ ...transaction, budgetCategoryId: budgetIdOf(transaction) }));
     const spentByCategory = new Map<string, number>();
     for (const transaction of confirmedExpenses) {
-      if (!transaction.budgetCategoryId || !isExpenseBudgetCategory(transaction.budgetCategoryId)) continue;
       spentByCategory.set(transaction.budgetCategoryId, (spentByCategory.get(transaction.budgetCategoryId) ?? 0) + actualAmount(transaction));
     }
 
@@ -84,7 +92,7 @@ export class DailyBudgetService {
     const savingBudgetAmount = allocationAmount('core.saving');
     const investmentBudgetAmount = allocationAmount('core.investment');
     const remainingUsableAmount = usableBudgetAmount - variableExpenseAmount;
-    const todayVariableExpenseAmount = confirmedExpenses.filter((transaction) => transaction.budgetCategoryId !== undefined && isDailySpendableBudgetCategory(transaction.budgetCategoryId) && dateOnly(transaction.occurredAt) === todayKey).reduce((sum, transaction) => sum + actualAmount(transaction), 0);
+    const todayVariableExpenseAmount = confirmedExpenses.filter((transaction) => isDailySpendableBudgetCategory(transaction.budgetCategoryId) && dateOnly(transaction.occurredAt) === todayKey).reduce((sum, transaction) => sum + actualAmount(transaction), 0);
     // Today's allowance is fixed for the day: the usable budget as it stood at
     // the start of today (i.e. before today's spending), spread over the days
     // left. Today's spending is then taken off that allowance exactly once in

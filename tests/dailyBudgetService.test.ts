@@ -60,3 +60,28 @@ test('divides the remaining budget over today through the day before the next pa
   expect(result.remainingDays).toBe(5);
   expect(result.todayRecommendedAmount).toBe(Math.floor(1350000 / 5));
 });
+
+// P0-04: no confirmed expense may silently leave the Home budget.
+describe('every confirmed expense counts against a 지출 대분류 budget', () => {
+  const expense = (budgetCategoryId: string | undefined, amount = 10000) => ({ amount, refundedAmount: 0, type: 'EXPENSE' as const, status: 'CONFIRMED' as const, budgetCategoryId, occurredAt: cycleStart });
+
+  it.each([
+    ['a legacy custom 대분류 (uuid root)', '3f1c9a52-0000-4000-8000-000000000000'],
+    ['a retired system 대분류', 'core.expense.finance'],
+    ['the retired core.expense root', 'core.expense'],
+    ['a missing category', undefined],
+  ])('an expense whose root is %s counts under 기타 and reduces usable money', (_label, budgetCategoryId) => {
+    const result = service.calculate({ ...base, transactions: [expense(budgetCategoryId)] });
+    expect(result.variableExpenseAmount).toBe(10000);
+    expect(result.remainingUsableAmount).toBe(1340000);
+    expect(result.todayVariableExpenseAmount).toBe(10000);
+    expect(result.categoryProgress.find((category) => category.categoryId === 'core.expense.other')?.spentAmount).toBe(10000);
+  });
+
+  it('the sum of category spending equals every confirmed expense up to today', () => {
+    const transactions = [expense('core.expense.food', 1000), expense('core.expense.fixed', 2000), expense('legacy-root', 4000), expense(undefined, 8000)];
+    const result = service.calculate({ ...base, transactions });
+    expect(result.categoryProgress.reduce((sum, category) => sum + category.spentAmount, 0)).toBe(15000);
+    expect(result.variableExpenseAmount + result.fixedExpenseAmount).toBe(15000);
+  });
+});

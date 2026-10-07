@@ -1,4 +1,5 @@
 import { Op } from 'sequelize';
+import { isExpenseBudgetRoot } from '../constants/budgetPlan';
 import { CATEGORY_CATALOG, CATEGORY_IDS } from '../constants/categoryCatalog';
 import { Category, UserCategoryPreference } from '../models';
 import { AppError } from '../utils/errors';
@@ -81,12 +82,19 @@ export class CategoryService {
   }
 
   private async validateParent(userId: string, parentCategoryId: string | null | undefined, type: string, selfId?: string) {
+    // Home and the budget only count spending under the 10 지출 대분류 the
+    // budget plan allocates to, so a custom EXPENSE category is always a
+    // 소분류 of one of them; a custom 지출 대분류 would bypass the budget.
+    if (type === 'EXPENSE' && (!parentCategoryId || !isExpenseBudgetRoot(parentCategoryId))) {
+      throw new AppError('EXPENSE_CATEGORY_PARENT_REQUIRED', '지출 카테고리는 기본 대분류 아래에만 추가할 수 있어요.', 400);
+    }
     if (parentCategoryId === undefined || parentCategoryId === null) return null;
     if (parentCategoryId === selfId) throw new AppError('INVALID_CATEGORY_PARENT', 'A category cannot be its own parent', 400);
     const parent = await this.findAccessible(userId, parentCategoryId);
     if (!parent || !parent.get('isActive')) throw new AppError('INVALID_CATEGORY_PARENT', 'Parent category not found or inactive', 400);
     if (parent.get('parentCategoryId')) throw new AppError('CATEGORY_DEPTH_EXCEEDED', 'Categories can have at most one parent level', 400);
     if (parent.get('type') !== type) throw new AppError('CATEGORY_TYPE_MISMATCH', 'Parent and child category types must match', 400);
+    if (type === 'EXPENSE') return parentCategoryId;
     return this.effectiveId(userId, parentCategoryId);
   }
 
@@ -229,7 +237,9 @@ export class CategoryService {
     }
     if (currentData.ownerUserId !== userId) throw new AppError('CATEGORY_NOT_FOUND', 'Category not found', 404);
 
-    const parentCategoryId = await this.validateParent(userId, input.parentCategoryId === undefined ? currentData.parentCategoryId : input.parentCategoryId, currentData.type, categoryId);
+    // Only a parent the request actually sends is validated, so a name/icon
+    // edit still works on a row saved before the current parent rules.
+    const parentCategoryId = input.parentCategoryId === undefined ? currentData.parentCategoryId : await this.validateParent(userId, input.parentCategoryId, currentData.type, categoryId);
     if (input.isActive === false && currentData.isActive) await this.assertNoActiveChildren(userId, categoryId);
     const category = await current.update({
       name: input.name === undefined ? currentData.name : input.name,

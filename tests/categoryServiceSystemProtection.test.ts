@@ -250,6 +250,67 @@ describe('CategoryService system category protection', () => {
   });
 });
 
+// P0-04: a custom EXPENSE category is always a 소분류 of one of the 10 지출
+// 대분류 the budget plan allocates to, so its spending can never bypass Home.
+describe('CategoryService custom EXPENSE parent rule', () => {
+  let service: CategoryService;
+  let custom: any;
+
+  beforeEach(() => {
+    rows.clear();
+    preferences.clear();
+    jest.clearAllMocks();
+    service = new CategoryService();
+    row({ id: 'core.expense.food', ownerUserId: null, name: '식비', type: 'EXPENSE' });
+    row({ id: 'core.expense.transport', ownerUserId: null, name: '교통', type: 'EXPENSE' });
+    row({ id: 'core.expense.finance', ownerUserId: null, name: '금융', type: 'EXPENSE', isActive: false });
+    row({ id: 'core.expense.food.meal', ownerUserId: null, name: '식사', type: 'EXPENSE', parentCategoryId: 'core.expense.food' });
+    row({ id: 'core.saving', ownerUserId: null, name: '저축', type: 'SAVING', purposeType: 'SAVING' });
+    row({ id: 'core.income', ownerUserId: null, name: '수입', type: 'INCOME' });
+    custom = row({ id: 'custom-1', ownerUserId: USER, name: '야식', type: 'EXPENSE', parentCategoryId: 'core.expense.food' });
+  });
+
+  it.each([
+    ['no parent', undefined],
+    ['parent null', null],
+    ['a custom category as parent', 'custom-1'],
+    ['a 소분류 as parent', 'core.expense.food.meal'],
+    ['a retired system 대분류', 'core.expense.finance'],
+    ['a non-expense root', 'core.saving'],
+    ['an unknown id', 'nope'],
+  ])('rejects a custom EXPENSE category with %s', async (_label, parentCategoryId) => {
+    await expect(service.create(USER, { name: '내 대분류', type: 'EXPENSE', parentCategoryId: parentCategoryId as any })).rejects.toMatchObject({ code: 'EXPENSE_CATEGORY_PARENT_REQUIRED', status: 400 });
+    expect(Category.create).not.toHaveBeenCalled();
+  });
+
+  it('creates a custom EXPENSE category under an official 지출 대분류', async () => {
+    const created = await service.create(USER, { name: '반려동물', type: 'EXPENSE', parentCategoryId: 'core.expense.food' });
+    expect(created).toMatchObject({ name: '반려동물', parentCategoryId: 'core.expense.food', isCustom: true });
+  });
+
+  it('rejects moving a custom EXPENSE category to the top level or under a non-budget parent', async () => {
+    await expect(service.update(USER, 'custom-1', { parentCategoryId: null })).rejects.toMatchObject({ code: 'EXPENSE_CATEGORY_PARENT_REQUIRED' });
+    await expect(service.update(USER, 'custom-1', { parentCategoryId: 'core.expense.finance' })).rejects.toMatchObject({ code: 'EXPENSE_CATEGORY_PARENT_REQUIRED' });
+    expect(custom.data.parentCategoryId).toBe('core.expense.food');
+  });
+
+  it('moves a custom EXPENSE category between official 대분류', async () => {
+    await service.update(USER, 'custom-1', { parentCategoryId: 'core.expense.transport' });
+    expect(custom.data.parentCategoryId).toBe('core.expense.transport');
+  });
+
+  it('still renames a legacy custom EXPENSE root without demanding a parent', async () => {
+    const legacy = row({ id: 'legacy-root', ownerUserId: USER, name: '옛 대분류', type: 'EXPENSE', parentCategoryId: null });
+    await service.update(USER, 'legacy-root', { name: '새 이름' });
+    expect(legacy.data).toMatchObject({ name: '새 이름', parentCategoryId: null });
+  });
+
+  it('leaves INCOME categories as they were', async () => {
+    const created = await service.create(USER, { name: '부수입', type: 'INCOME', parentCategoryId: 'core.income' });
+    expect(created).toMatchObject({ parentCategoryId: 'core.income' });
+  });
+});
+
 describe('categoryPatchSchema', () => {
   it('accepts name, icon and color and drops a userId from the body', () => {
     expect(categoryPatchSchema.parse({ name: ' 카카오택시 ', icon: 'local_taxi', color: '#ed5564', userId: OTHER })).toEqual({ name: '카카오택시', icon: 'local_taxi', color: '#ED5564' });
